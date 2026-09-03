@@ -1,0 +1,60 @@
+# systemd unit for the voice lab.
+#
+#   sudo cp deploy/voicelab.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now voicelab
+#
+# `enable` is what makes it come back after a reboot; `Restart=always` is what
+# makes it come back after a crash. Both are needed -- neither implies the other.
+
+[Unit]
+Description=voice lab - labelled voice sample collection for the pwiews pipeline
+Documentation=https://github.com/AbhijithSriram/voice-lab
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=voicelab
+Group=voicelab
+
+WorkingDirectory=/opt/voice-lab
+# run.py imports the top-level `config` module, so the project root has to be
+# importable. gunicorn adds WorkingDirectory to sys.path already; this is the
+# belt to that pair of braces.
+Environment=PYTHONPATH=/opt/voice-lab
+Environment=PYTHONUNBUFFERED=1
+
+# Secrets live here, not in the unit file and not in the repository.
+EnvironmentFile=/etc/voice-lab.env
+
+# One worker, several threads. Not a throughput decision -- a correctness one.
+# db.py opens a fresh sqlite3 connection per call with the default rollback
+# journal and a 5 s busy timeout. Several *processes* writing that database is
+# how you get "database is locked" in the middle of a demo; several threads in
+# one process is not.
+ExecStart=/opt/voice-lab/.venv/bin/gunicorn \
+    --workers 1 \
+    --threads 8 \
+    --timeout 120 \
+    --bind 127.0.0.1:5000 \
+    --access-logfile - \
+    --error-logfile - \
+    "voicelab.app:create_app()"
+
+Restart=always
+RestartSec=3
+
+# Sandboxing. The code directory is read-only to the service; the only path it
+# may write is its data directory, which is where VOICELAB_DATA_DIR points.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=/var/lib/voicelab
+
+[Install]
+WantedBy=multi-user.target

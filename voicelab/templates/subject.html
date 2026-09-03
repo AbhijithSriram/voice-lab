@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}{{ subject.username }}{% endblock %}
+{% block content %}
+
+<h1>{{ subject.display_name or subject.username }}</h1>
+<p class="sub mono">{{ subject.username }} · joined {{ subject.created_at[:10] }}</p>
+{% if subject.notes %}<div class="note">{{ subject.notes }}</div>{% endif %}
+
+<div class="card">
+  <h2>Their result</h2>
+  {% if result.separation is none %}
+    <p class="dim small">
+      Not scorable yet.
+      {% if result.skipped %}<br>{{ result.skipped | join('<br>') | safe }}{% endif %}
+    </p>
+  {% else %}
+  <div class="stats">
+    <div class="stat">
+      <div class="value {% if result.separation > 0 %}pos{% else %}neg{% endif %}">
+        {{ '%+.1f'|format(result.separation) }}
+      </div>
+      <div class="label">separation</div>
+    </div>
+    <div class="stat">
+      <div class="value">{{ result.auc }}</div>
+      <div class="label">AUC</div>
+    </div>
+    <div class="stat">
+      <div class="value">{{ result.control_mean }}</div>
+      <div class="label">control μ ({{ result.control_n }})</div>
+    </div>
+    <div class="stat">
+      <div class="value">{{ result.case_mean }}</div>
+      <div class="label">case μ ({{ result.case_n }})</div>
+    </div>
+  </div>
+  {% if result.skipped %}
+  <p class="small faint" style="margin-top:14px">skipped: {{ result.skipped | join('; ') }}</p>
+  {% endif %}
+  {% endif %}
+</div>
+
+{% if result.feature_z %}
+<div class="card">
+  <h2>Per feature, this subject</h2>
+  <table>
+    <tr><th>Feature</th><th class="num">Control z</th><th class="num">Case z</th></tr>
+    {% for name in feature_names %}
+    {% set row = result.feature_z.get(name, {}) %}
+    <tr>
+      <td class="mono">{{ name }}</td>
+      <td class="num">{{ row.control if row.control is not none else '—' }}</td>
+      <td class="num">{{ row.case if row.case is not none else '—' }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>Recordings ({{ recordings|length }})</h2>
+  <table>
+    <tr>
+      <th>When</th><th>Label</th><th class="num">Int.</th><th>Language</th>
+      <th class="num">Length</th><th class="num">F0</th><th class="num">Rate</th>
+      <th class="num">Jitter</th><th class="num">Shimmer</th><th>Audio</th>
+    </tr>
+    {% for rec in recordings %}
+    <tr>
+      <td class="mono">{{ rec.created_at[:19].replace('T', ' ') }}</td>
+      <td><span class="pill {{ rec.label }}">{{ rec.label }}</span></td>
+      <td class="num">{{ rec.intensity if rec.intensity is not none else '—' }}</td>
+      <td class="small">{{ rec.language or '—' }}</td>
+      <td class="num">{{ '%.1f'|format(rec.duration_sec) }}s</td>
+      {% if rec.features %}
+        <td class="num">{{ '%.0f'|format(rec.features.f0_mean_hz) }}</td>
+        <td class="num">{{ '%.1f'|format(rec.features.speaking_rate_syllables_per_sec) }}</td>
+        <td class="num">{{ '%.2f'|format(rec.features.jitter_local_pct) }}</td>
+        <td class="num">{{ '%.2f'|format(rec.features.shimmer_local_pct) }}</td>
+      {% else %}
+        <td colspan="4" class="small neg" title="{{ rec.extract_error }}">not measured</td>
+      {% endif %}
+      <td>
+        <audio controls preload="none" style="height:28px;max-width:150px"
+               src="{{ url_for('admin_audio', filename=rec.filename) }}"></audio>
+      </td>
+    </tr>
+    {% if rec.prompt_text %}
+    <tr><td colspan="10" class="small faint" style="padding-top:0">{{ rec.prompt_text }}</td></tr>
+    {% endif %}
+    {% endfor %}
+  </table>
+</div>
+
+<p><a href="{{ url_for('admin') }}">Back to subjects</a></p>
+{% endblock %}

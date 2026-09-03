@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+{% block title %}Results{% endblock %}
+{% block content %}
+
+{% set s = report.summary %}
+
+<h1>Analysis</h1>
+<p class="sub mono">{{ run.created_at[:19].replace('T', ' ') }} UTC</p>
+
+<div class="card">
+  <h2>Headline</h2>
+  {% if s.separation is none %}
+    <p class="dim">
+      Nothing scorable yet. A subject needs more than
+      {{ report.settings.VOICE_BASELINE_MIN_SAMPLES }} neutral recordings and at
+      least one labelled one.
+    </p>
+  {% else %}
+  <div class="stats">
+    <div class="stat">
+      <div class="value {% if s.separation > 0 %}pos{% else %}neg{% endif %}">
+        {{ '%+.1f'|format(s.separation) }}
+      </div>
+      <div class="label">separation (pts)</div>
+    </div>
+    <div class="stat">
+      <div class="value">{{ s.mean_within_subject_auc }}</div>
+      <div class="label">within-subject AUC</div>
+    </div>
+    <div class="stat">
+      <div class="value">{{ s.pooled_auc }}</div>
+      <div class="label">pooled AUC</div>
+    </div>
+    <div class="stat">
+      <div class="value">{{ s.control_mean }}</div>
+      <div class="label">control mean</div>
+    </div>
+    <div class="stat">
+      <div class="value">{{ s.case_mean }}</div>
+      <div class="label">case mean</div>
+    </div>
+    <div class="stat">
+      <div class="value">{{ s.subjects_scored }}/{{ s.subjects_total }}</div>
+      <div class="label">subjects scored</div>
+    </div>
+  </div>
+
+  <div class="note">
+    <strong>Read the within-subject AUC, not the pooled one.</strong> They answer
+    different questions. Pooled AUC can be flattered by some people simply
+    scoring higher than others overall; the within-subject figure cannot, because
+    it only ever compares a person to themselves — which is the only comparison
+    this pipeline actually makes. 0.5 is a coin flip.
+  </div>
+
+  {% if s.control_mean and s.control_mean > 25 %}
+  <div class="note warn">
+    <strong>The control mean is high ({{ s.control_mean }}).</strong> A person's
+    neutral recordings measured against their own neutral baseline should sit
+    near zero. That they do not suggests the pipeline is picking up recording
+    conditions, time of day, or microphone differences — not affect. Any
+    separation on top of this is standing on sand. Check whether subjects are
+    recording on different devices or in different rooms.
+  </div>
+  {% endif %}
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Per feature</h2>
+  <p class="small dim" style="margin-top:-6px">
+    Mean directional z against baseline. Positive means the feature moved the way
+    <code>VOICE_FEATURE_DIRECTIONS</code> expects. <strong>A negative shift is a
+    finding, not a bug</strong> — sad speech is documented to slow down and pause
+    <em>more</em>, which is the opposite of the pressured-speech directions these
+    settings were written for.
+  </p>
+  <table>
+    <tr>
+      <th>Feature</th><th class="num">Dir</th><th class="num">Weight</th>
+      <th class="num">Control z</th><th class="num">Case z</th><th class="num">Shift</th>
+    </tr>
+    {% for f in report.features %}
+    <tr>
+      <td class="mono">{{ f.feature }}</td>
+      <td class="num">{{ '%+d'|format(f.direction) if f.direction is not none else '—' }}</td>
+      <td class="num">{{ f.weight }}</td>
+      <td class="num">{{ f.control_z if f.control_z is not none else '—' }}</td>
+      <td class="num">{{ f.case_z if f.case_z is not none else '—' }}</td>
+      <td class="num">
+        {% if f.shift is none %}—
+        {% elif f.shift > 0 %}<span class="pos">{{ '%+.3f'|format(f.shift) }}</span>
+        {% else %}<span class="neg">{{ '%+.3f'|format(f.shift) }}</span>{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div class="card">
+  <h2>Per subject</h2>
+  <table>
+    <tr>
+      <th>Subject</th><th class="num">Baseline</th><th class="num">Controls</th>
+      <th class="num">Cases</th><th class="num">Control μ</th><th class="num">Case μ</th>
+      <th class="num">Sep</th><th class="num">AUC</th>
+    </tr>
+    {% for row in report.subjects %}
+    <tr>
+      <td>{{ row.username }}</td>
+      <td class="num">{{ row.baseline_count }}</td>
+      <td class="num">{{ row.control_n }}</td>
+      <td class="num">{{ row.case_n }}</td>
+      <td class="num">{{ row.control_mean if row.control_mean is not none else '—' }}</td>
+      <td class="num">{{ row.case_mean if row.case_mean is not none else '—' }}</td>
+      <td class="num">
+        {% if row.separation is none %}—
+        {% elif row.separation > 0 %}<span class="pos">{{ '%+.1f'|format(row.separation) }}</span>
+        {% else %}<span class="neg">{{ '%+.1f'|format(row.separation) }}</span>{% endif %}
+      </td>
+      <td class="num">{{ row.auc if row.auc is not none else '—' }}</td>
+    </tr>
+    {% if row.skipped %}
+    <tr>
+      <td colspan="8" class="small faint" style="padding-top:0">
+        skipped: {{ row.skipped | join('; ') }}
+      </td>
+    </tr>
+    {% endif %}
+    {% endfor %}
+  </table>
+</div>
+
+<div class="card">
+  <h2>Settings this run used</h2>
+  <p class="small dim" style="margin-top:-6px">
+    Stored with the result, so runs stay comparable after you change them.
+  </p>
+  <pre class="mono small" style="overflow-x:auto">{{ report.settings | tojson(indent=2) }}</pre>
+</div>
+
+{% if runs|length > 1 %}
+<div class="card">
+  <h2>Other runs</h2>
+  <table>
+    <tr><th>When</th><th>Result</th></tr>
+    {% for r in runs %}
+    <tr>
+      <td class="mono"><a href="{{ url_for('results', run_id=r.id) }}">{{ r.created_at[:19].replace('T', ' ') }}</a></td>
+      <td class="small">{{ r.summary }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+{% endblock %}

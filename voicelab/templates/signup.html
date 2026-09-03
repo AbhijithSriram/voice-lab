@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Sign up{% endblock %}
+{% block main_class %}narrow{% endblock %}
+{% block content %}
+<h1>Sign up</h1>
+<p class="sub">Create an account so your recordings are grouped together.</p>
+
+<form method="post" class="card">
+  <div class="field">
+    <label for="username">Username</label>
+    <input type="text" id="username" name="username" autocomplete="username" autofocus required>
+  </div>
+  <div class="field">
+    <label for="password">Password (at least 8 characters)</label>
+    <input type="password" id="password" name="password" autocomplete="new-password" required>
+  </div>
+  <div class="field">
+    <label for="display_name">Name to show (optional)</label>
+    <input type="text" id="display_name" name="display_name">
+  </div>
+  <div class="field">
+    <label for="notes">Anything worth noting (optional)</label>
+    <textarea id="notes" name="notes"
+      placeholder="e.g. first language, whether you have a cold today, what device you are recording on"></textarea>
+  </div>
+  <div class="field">
+    <label for="admin_code">Admin code (leave blank)</label>
+    <input type="text" id="admin_code" name="admin_code" autocomplete="off">
+  </div>
+  <button>Create account</button>
+</form>
+
+<div class="note">
+  <strong>What is collected.</strong> Short voice recordings you choose to make,
+  and the label you give each one. The recordings are kept as audio files so the
+  measurements can be re-run when the analysis changes.
+</div>
+<div class="note">
+  <strong>What is measured.</strong> Only how your voice sounds — pitch, pace,
+  pauses, steadiness. There is no transcription anywhere in this system, so what
+  you actually say is never converted to text or analysed. That is why you can
+  speak in whichever language you prefer.
+</div>
+{% endblock %}

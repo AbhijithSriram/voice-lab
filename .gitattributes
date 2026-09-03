@@ -1,0 +1,11 @@
+# Default: let git normalise text in the repository.
+* text=auto
+
+# These are read by Linux daemons, never by Windows. A CRLF here is not a
+# cosmetic problem: systemd would parse `VOICELAB_BEHIND_PROXY=1\r`, the value
+# would not equal "1", ProxyFix would quietly not be installed, Flask would
+# build http:// URLs, and the microphone would stop working for reasons that
+# look nothing like the cause.
+deploy/*        text eol=lf
+*.py            text eol=lf
+*.sh            text eol=lf

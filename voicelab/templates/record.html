@@ -1,0 +1,221 @@
+{% extends "base.html" %}
+{% block title %}Record{% endblock %}
+{% block content %}
+
+<h1>Record a sample</h1>
+<p class="sub">
+  Pick how you are going to speak, pick something to say, then record for
+  {{ min_record_sec }}–{{ max_record_sec }} seconds. Speak in any language you like.
+</p>
+
+{% set neutral_n = counts.get('neutral', 0) %}
+{% if neutral_n <= baseline_needed %}
+<div class="note warn">
+  <strong>Start with neutral recordings.</strong> Your first
+  {{ baseline_needed + 1 }} neutral samples build your personal baseline —
+  everything else is compared against how <em>you</em> normally sound, never
+  against anybody else. You have {{ neutral_n }} so far.
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>1 · How are you going to speak?</h2>
+  <div class="field">
+    <select id="label">
+      {% for value, text in labels %}
+        <option value="{{ value }}"{% if value == 'neutral' and neutral_n <= baseline_needed %} selected{% endif %}>{{ text }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="field" id="intensity-field" hidden>
+    <label for="intensity">How strongly are you feeling / portraying it? (0 = barely, 4 = strongly)</label>
+    <input type="range" id="intensity" min="0" max="4" value="2" style="width:100%">
+  </div>
+  <div class="field">
+    <label for="language">Which language are you speaking? (optional)</label>
+    <input type="text" id="language" placeholder="e.g. Tamil, Malayalam, Hindi, English">
+  </div>
+</div>
+
+<div class="card">
+  <h2>2 · Say this</h2>
+  <div class="field">
+    <select id="prompt">
+      {% for prompt in prompts %}
+        <option value="{{ prompt.id }}" data-kind="{{ prompt.kind }}">{{ prompt.text }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <p class="small faint" id="prompt-hint"></p>
+</div>
+
+<div class="card recorder">
+  <h2>3 · Record</h2>
+  <div class="timer" id="timer">0.0s</div>
+  <div class="hint" id="hint">
+    Ready. You will be asked for microphone access the first time.
+  </div>
+  <div class="level"><i id="level-bar"></i></div>
+  <p style="margin-top:22px">
+    <button class="big" id="record-btn">Start recording</button>
+  </p>
+  <p class="small faint" id="status"></p>
+</div>
+
+<div class="card">
+  <h2>Your recordings</h2>
+  <div class="stats" style="margin-bottom:16px">
+    {% for value, text in labels %}
+      <div class="stat">
+        <div class="value">{{ counts.get(value, 0) }}</div>
+        <div class="label">{{ value }}</div>
+      </div>
+    {% endfor %}
+  </div>
+  {% if recent %}
+  <table>
+    <tr><th>When</th><th>Label</th><th class="num">Length</th><th>Measured</th></tr>
+    {% for rec in recent %}
+    <tr>
+      <td class="mono">{{ rec.created_at[:19].replace('T', ' ') }}</td>
+      <td><span class="pill {{ rec.label }}">{{ rec.label }}</span></td>
+      <td class="num">{{ '%.1f'|format(rec.duration_sec) }}s</td>
+      <td>
+        {% if rec.features_json %}<span class="pill ok">yes</span>
+        {% else %}<span class="pill bad" title="{{ rec.extract_error }}">no</span>{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="dim small">Nothing recorded yet.</p>
+  {% endif %}
+</div>
+
+<div class="note">
+  Only how your voice sounds is measured — pitch, pace, pauses, steadiness.
+  There is no transcription anywhere in this system, so what you say is never
+  turned into text.
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script type="module">
+import { Recorder } from "{{ url_for('static', filename='recorder.js') }}";
+
+const MIN_SEC = {{ min_record_sec }};
+const MAX_SEC = {{ max_record_sec }};
+
+const btn = document.getElementById("record-btn");
+const timer = document.getElementById("timer");
+const hint = document.getElementById("hint");
+const status = document.getElementById("status");
+const labelSel = document.getElementById("label");
+const promptSel = document.getElementById("prompt");
+const promptHint = document.getElementById("prompt-hint");
+const intensityField = document.getElementById("intensity-field");
+const levelBar = document.getElementById("level-bar");
+
+let recorder = null;
+let ticker = null;
+
+/** Show the intensity slider only when a label other than neutral is chosen. */
+function syncLabel() {
+  intensityField.hidden = labelSel.value === "neutral";
+}
+labelSel.addEventListener("change", syncLabel);
+syncLabel();
+
+/** Explain what kind of prompt is selected. */
+function syncPrompt() {
+  const kind = promptSel.selectedOptions[0]?.dataset.kind;
+  promptHint.textContent = kind === "fixed"
+    ? "Everyone reads this same text, so recordings can be compared directly."
+    : "Talk freely for at least " + MIN_SEC + " seconds. Content does not matter — only how it sounds.";
+}
+promptSel.addEventListener("change", syncPrompt);
+syncPrompt();
+
+/** Format seconds for the timer. @param {number} s Seconds. @returns {string} Text. */
+function fmt(s) { return s.toFixed(1) + "s"; }
+
+btn.addEventListener("click", async () => {
+  if (!recorder) {
+    // ---- start ----
+    recorder = new Recorder();
+    try {
+      await recorder.start();
+    } catch (err) {
+      recorder = null;
+      hint.textContent = "Could not open the microphone: " + err.message;
+      if (!window.isSecureContext) {
+        hint.textContent += " (This page must be served over https, or from localhost.)";
+      }
+      return;
+    }
+    btn.textContent = "Stop and submit";
+    btn.classList.add("live");
+    timer.classList.add("live");
+    hint.textContent = "Recording. Speak normally.";
+    status.textContent = "";
+
+    ticker = setInterval(() => {
+      const secs = recorder.elapsed;
+      timer.textContent = fmt(secs);
+      levelBar.style.width = Math.min(100, (secs / MAX_SEC) * 100) + "%";
+      if (secs >= MAX_SEC) btn.click();
+    }, 100);
+    return;
+  }
+
+  // ---- stop ----
+  clearInterval(ticker);
+  const secs = recorder.elapsed;
+  const blob = recorder.stop();
+  recorder = null;
+  btn.classList.remove("live");
+  timer.classList.remove("live");
+  btn.textContent = "Start recording";
+  levelBar.style.width = "0";
+
+  if (secs < MIN_SEC) {
+    hint.textContent = "That was only " + fmt(secs) + ". Please record at least " + MIN_SEC + " seconds.";
+    timer.textContent = "0.0s";
+    return;
+  }
+
+  hint.textContent = "Uploading…";
+  btn.disabled = true;
+
+  const form = new FormData();
+  form.append("audio", blob, "sample.wav");
+  form.append("label", labelSel.value);
+  form.append("prompt_id", promptSel.value);
+  form.append("language", document.getElementById("language").value);
+  if (labelSel.value !== "neutral") {
+    form.append("intensity", document.getElementById("intensity").value);
+  }
+
+  try {
+    const response = await fetch("{{ url_for('upload_recording') }}", { method: "POST", body: form });
+    const body = await response.json();
+    if (!response.ok) {
+      hint.textContent = "Not saved: " + (body.error || response.status);
+    } else if (!body.measured) {
+      // Kept, but the subject should know it did not yield a usable measurement.
+      hint.textContent = "Saved, but it could not be measured — try again somewhere quieter, speaking a little more.";
+      status.textContent = body.note || "";
+    } else {
+      hint.textContent = "Saved. That is " + body.label_count + " " + body.label + " recording(s).";
+      status.textContent = "Record another whenever you like.";
+      setTimeout(() => window.location.reload(), 1200);
+    }
+  } catch (err) {
+    hint.textContent = "Upload failed: " + err.message;
+  } finally {
+    btn.disabled = false;
+    timer.textContent = "0.0s";
+  }
+});
+</script>
+{% endblock %}

@@ -1,0 +1,11 @@
+# The lab itself
+flask>=3.0
+werkzeug>=3.0
+
+# The vendored acoustic pipeline
+numpy>=1.24
+scipy>=1.10
+
+# The production server. run.py's Flask dev server is fine on a laptop; this is
+# what deploy/voicelab.service actually starts.
+gunicorn>=21.2

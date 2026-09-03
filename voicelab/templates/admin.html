@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Subjects{% endblock %}
+{% block content %}
+
+<h1>Subjects</h1>
+<p class="sub">
+  A subject becomes scorable once they have more than {{ baseline_needed }}
+  neutral recordings — the first {{ baseline_needed }} build their baseline and
+  produce no score.
+</p>
+
+{% if insecure_secret or default_admin_code %}
+<div class="note warn">
+  <strong>Before putting this on a public address:</strong>
+  <ul style="margin:6px 0 0 18px; padding:0">
+    {% if insecure_secret %}
+    <li><code>VOICELAB_SECRET_KEY</code> is unset, so sessions are signed with a
+        key that changes on every restart and everyone gets logged out.</li>
+    {% endif %}
+    {% if default_admin_code %}
+    <li><code>VOICELAB_ADMIN_CODE</code> is unset, so the default admin code is
+        in effect and anybody who reads the source can make themselves an admin.</li>
+    {% endif %}
+  </ul>
+</div>
+{% endif %}
+
+<div class="card">
+  <form method="post" action="{{ url_for('run_analysis_route') }}" style="display:inline">
+    <button>Run analysis</button>
+  </form>
+  <a href="{{ url_for('export_json') }}" class="small" style="margin-left:14px">Export everything as JSON</a>
+  <p class="small faint" style="margin:12px 0 0">
+    The analysis re-reads the stored features every time, so edit
+    <code>voicelab/dsp/settings.py</code>, run it again, and compare.
+  </p>
+</div>
+
+<div class="card">
+  <h2>People</h2>
+  {% if subjects %}
+  <table>
+    <tr>
+      <th>Subject</th><th class="num">Neutral</th><th class="num">Labelled</th>
+      <th class="num">Unmeasured</th><th>State</th><th>Notes</th>
+    </tr>
+    {% for s in subjects %}
+    <tr>
+      <td>
+        <a href="{{ url_for('subject_detail', user_id=s.id) }}">{{ s.display_name or s.username }}</a>
+        {% if s.is_admin %}<span class="pill">admin</span>{% endif %}
+      </td>
+      <td class="num">{{ s.neutral_n or 0 }}</td>
+      <td class="num">{{ s.case_n or 0 }}</td>
+      <td class="num">
+        {% if s.unmeasured_n %}<span class="neg">{{ s.unmeasured_n }}</span>{% else %}0{% endif %}
+      </td>
+      <td>
+        {% if (s.neutral_n or 0) > baseline_needed and (s.case_n or 0) > 0 %}
+          <span class="pill ok">scorable</span>
+        {% elif (s.neutral_n or 0) > baseline_needed %}
+          <span class="pill">needs labelled samples</span>
+        {% else %}
+          <span class="pill">needs {{ baseline_needed + 1 - (s.neutral_n or 0) }} more neutral</span>
+        {% endif %}
+      </td>
+      <td class="small dim">{{ s.notes or '' }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="dim small">Nobody has signed up yet.</p>
+  {% endif %}
+</div>
+
+{% if runs %}
+<div class="card">
+  <h2>Previous runs</h2>
+  <table>
+    <tr><th>When</th><th>Result</th></tr>
+    {% for run in runs %}
+    <tr>
+      <td class="mono"><a href="{{ url_for('results', run_id=run.id) }}">{{ run.created_at[:19].replace('T', ' ') }}</a></td>
+      <td class="small">{{ run.summary }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,142 @@
+/* voice lab stylesheet.
+ *
+ * Deliberately plain. This is an instrument, not a product: a subject should
+ * be able to read the prompt and find the record button, and an admin should
+ * be able to read a table of numbers. Anything else is decoration that would
+ * have to be maintained.
+ *
+ * One choice that is not cosmetic: the recording state is signalled by a large
+ * unambiguous block of colour and a running timer, never by a small icon.
+ * Somebody who is unsure whether they are being recorded speaks differently
+ * from somebody who is sure, and that difference lands in the measurements.
+ */
+
+:root {
+  --bg: #10151c;
+  --panel: #18202b;
+  --raised: #1f2937;
+  --line: #2c3a4d;
+  --text: #e7edf5;
+  --dim: #9aa9bd;
+  --faint: #6b7d94;
+  --accent: #5aa9e6;
+  --accent-dim: #2c6b9c;
+  --live: #cf6060;
+  --ok: #4fb3a0;
+  --warn: #d9a441;
+  --radius: 10px;
+  --mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+a { color: var(--accent); }
+
+header.top {
+  display: flex; align-items: center; gap: 16px;
+  padding: 14px 22px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+header.top .brand { font-weight: 650; letter-spacing: 0.02em; }
+header.top .brand span { color: var(--accent); }
+header.top nav { margin-left: auto; display: flex; gap: 14px; align-items: center; }
+header.top nav a { text-decoration: none; color: var(--dim); }
+header.top nav a:hover { color: var(--text); }
+
+main { max-width: 940px; margin: 0 auto; padding: 26px 20px 70px; }
+main.narrow { max-width: 460px; }
+
+h1 { font-size: 24px; margin: 0 0 6px; }
+h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 0.08em;
+     color: var(--faint); margin: 0 0 12px; }
+p.sub { color: var(--dim); margin: 0 0 22px; }
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  margin-bottom: 18px;
+}
+
+label { display: block; margin-bottom: 5px; color: var(--dim); font-size: 13px; }
+input[type=text], input[type=password], select, textarea {
+  width: 100%; padding: 9px 11px; font: inherit;
+  background: #0f171f; color: var(--text);
+  border: 1px solid var(--line); border-radius: 7px;
+}
+textarea { min-height: 62px; resize: vertical; }
+.field { margin-bottom: 14px; }
+
+button {
+  font: inherit; padding: 9px 18px; border-radius: 7px; cursor: pointer;
+  border: 1px solid var(--accent); background: var(--accent-dim); color: #fff;
+}
+button.ghost { background: transparent; border-color: var(--line); color: var(--text); }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+button.big { font-size: 17px; padding: 14px 30px; }
+button.live { background: var(--live); border-color: var(--live); }
+
+.flash {
+  border-left: 3px solid var(--warn); background: var(--raised);
+  padding: 10px 14px; border-radius: 0 7px 7px 0; margin-bottom: 16px;
+}
+.note {
+  font-size: 13px; color: var(--dim); background: var(--raised);
+  border-left: 2px solid var(--line); padding: 10px 14px;
+  border-radius: 0 7px 7px 0; margin: 12px 0;
+}
+.note.warn { border-left-color: var(--warn); }
+
+/* Recording state. Big, obvious, impossible to misread. */
+.recorder { text-align: center; padding: 26px 20px; }
+.timer { font: 600 42px/1 var(--mono); margin: 14px 0 6px; }
+.timer.live { color: var(--live); }
+.hint { color: var(--faint); font-size: 13px; }
+.level {
+  height: 6px; background: var(--raised); border-radius: 3px;
+  overflow: hidden; margin: 16px auto 0; max-width: 320px;
+}
+.level > i { display: block; height: 100%; width: 0; background: var(--ok); }
+
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+th { color: var(--faint); font-weight: 500; font-size: 12px;
+     text-transform: uppercase; letter-spacing: 0.06em; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+tr:last-child td { border-bottom: none; }
+
+.pill {
+  display: inline-block; padding: 1px 9px; border-radius: 100px;
+  font-size: 12px; border: 1px solid var(--line); color: var(--dim);
+}
+.pill.neutral { border-color: var(--accent-dim); color: var(--accent); }
+.pill.sad { border-color: var(--warn); color: var(--warn); }
+.pill.ok { border-color: var(--ok); color: var(--ok); }
+.pill.bad { border-color: var(--live); color: var(--live); }
+
+.stats { display: flex; gap: 26px; flex-wrap: wrap; }
+.stat .value { font: 600 26px/1.2 var(--mono); }
+.stat .label { color: var(--faint); font-size: 12px;
+               text-transform: uppercase; letter-spacing: 0.06em; }
+
+.mono { font-family: var(--mono); font-size: 13px; }
+.dim { color: var(--dim); }
+.faint { color: var(--faint); }
+.small { font-size: 13px; }
+.pos { color: var(--ok); }
+.neg { color: var(--live); }
+
+@media (max-width: 620px) {
+  main { padding: 18px 14px 60px; }
+  .timer { font-size: 34px; }
+  table { font-size: 13px; }
+}

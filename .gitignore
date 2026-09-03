@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Subject recordings and the database. Real people's voices — not something to
+# put in a repository, and not ours to publish.
+data/
+
+# Local secrets, never committed.
+.env

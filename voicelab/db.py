@@ -83,7 +83,11 @@ CREATE TABLE IF NOT EXISTS recordings (
 );
 
 CREATE INDEX IF NOT EXISTS idx_recordings_user ON recordings(user_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_recordings_session ON recordings(user_id, session_id);
+-- The session index is created in _migrate, not here. On a database that
+-- predates session_id, CREATE TABLE IF NOT EXISTS leaves the old table alone,
+-- so this script would try to index a column that does not exist yet and
+-- init_db would raise -- inside create_app(), which means the service does not
+-- start at all.
 
 CREATE TABLE IF NOT EXISTS analyses (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -211,6 +215,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE prompts ADD COLUMN load TEXT")
     if "session_id" not in _columns(conn, "recordings"):
         conn.execute("ALTER TABLE recordings ADD COLUMN session_id TEXT")
+    # Only now is the column guaranteed to exist, on a fresh database and an
+    # upgraded one alike.
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_recordings_session"
+        " ON recordings(user_id, session_id)"
+    )
 
 
 def _sync_prompts(conn: sqlite3.Connection) -> None:

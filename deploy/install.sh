@@ -9,7 +9,7 @@
 #   /etc/voice-lab.env            created once, never overwritten
 #   /etc/systemd/system/voicelab.service
 #   /etc/cloudflared/config.yml   ONE ingress rule appended, backed up first
-#   /home/abhijith/voice-lab{,-data}
+#   /srv/nas/voice-lab           the data directory (recordings + database)
 #
 # It does not touch cockpit, chat, ammas-codex or locomotion-transitops.
 
@@ -17,7 +17,15 @@ set -euo pipefail
 
 APP_USER=abhijith
 APP_DIR=/home/abhijith/voice-lab
-DATA_DIR=/home/abhijith/voice-lab-data
+# Recordings and the database, together, on the 596 GB /srv partition
+# (/dev/nvme0n1p6). Two reasons they stay together rather than splitting the
+# audio off: / has about 22 GB free and recordings are the thing that grows,
+# and the `recordings` rows point at those files by name -- separated across
+# two filesystems, no single snapshot is guaranteed consistent and a restore
+# has two sources to reconcile. Safe for sqlite because /srv is local ext4;
+# on an NFS or CIFS mount the database would have to stay local, because
+# sqlite's locking is not reliable over either.
+DATA_DIR=/srv/nas/voice-lab
 ENV_FILE=/etc/voice-lab.env
 HOSTNAME_FQDN=voicelab.abhijith-sriram.in
 PORT=5000

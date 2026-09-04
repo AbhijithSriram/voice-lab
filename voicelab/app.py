@@ -264,6 +264,26 @@ def create_app() -> Flask:
         # One to spare beyond the baseline minimum: the extras become controls,
         # and without controls a separation cannot be computed at all.
         neutral_target = dsp_settings.VOICE_BASELINE_MIN_SAMPLES + 1
+
+        # The subject records a fixed running order, and the server decides it.
+        # Choosing a prompt was the single most confusing thing on this page:
+        # it asked someone to understand the experiment before they could take
+        # part in it, and offered ways to record a sitting that counted for
+        # nothing.
+        order = ["phonation", "automatic", "effortful"]
+        by_load = {p["load"]: p for p in prompts if p["load"]}
+        steps = [by_load[load] for load in order if load in by_load]
+
+        # A round is complete only when every load has one, so progress is the
+        # weakest load, not the total.
+        rounds_done = min((per_load.get(load, 0) for load in order), default=0)
+
+        last = db.query_one(
+            "SELECT language FROM recordings WHERE user_id = ? AND language IS NOT NULL"
+            " ORDER BY created_at DESC LIMIT 1",
+            (g.user["id"],),
+        )
+        last_language = last["language"] if last else ''
         recent = db.query(
             "SELECT * FROM recordings WHERE user_id = ? ORDER BY created_at DESC LIMIT 10",
             (g.user["id"],),
@@ -276,6 +296,10 @@ def create_app() -> Flask:
             recent=recent,
             pinned_automatic=pinned_automatic,
             per_load=per_load,
+            steps=steps,
+            rounds_done=rounds_done,
+            rounds_needed=neutral_target,
+            last_language=last_language,
             neutral_target=neutral_target,
             baseline_needed=dsp_settings.VOICE_BASELINE_MIN_SAMPLES,
         )

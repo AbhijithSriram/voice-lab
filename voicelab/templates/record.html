@@ -2,259 +2,279 @@
 {% block title %}Record{% endblock %}
 {% block content %}
 
-<h1>Record a sample</h1>
-<p class="sub">
-  Pick how you are going to speak, pick something to say, then record for
-  {{ min_record_sec }}–{{ max_record_sec }} seconds. Speak in any language you like.
-</p>
+{#
+  One question on screen at a time.
 
-{% set neutral_n = counts.get('neutral', 0) %}
-{% if neutral_n <= baseline_needed %}
-<div class="note warn">
-  <strong>Start with neutral recordings.</strong> Your first
-  {{ baseline_needed + 1 }} neutral samples build your personal baseline —
-  everything else is compared against how <em>you</em> normally sound, never
-  against anybody else. You have {{ neutral_n }} so far.
-</div>
-{% endif %}
+  The previous version of this page put the experiment's controls in front of
+  the subject -- a prompt menu, a label menu, an intensity slider, a checklist
+  counting "loads" -- and required them to assemble a valid sitting themselves.
+  They could not, and two of the first three sittings recorded on this server
+  counted for nothing.
 
-<div class="card">
-  <h2>1 · How are you going to speak?</h2>
-  <div class="field">
-    <select id="label">
-      {% for value, text in labels %}
-        <option value="{{ value }}"{% if value == 'neutral' and neutral_n <= baseline_needed %} selected{% endif %}>{{ text }}</option>
-      {% endfor %}
-    </select>
-  </div>
-  <p class="small faint" id="label-hint"></p>
-  <div class="field" id="intensity-field" hidden>
-    <label for="intensity">How strongly are you feeling / portraying it? (0 = barely, 4 = strongly)</label>
-    <input type="range" id="intensity" min="0" max="4" value="2" style="width:100%">
-  </div>
-  <div class="field">
-    <label for="language">Which language are you speaking? (optional)</label>
-    <input type="text" id="language" placeholder="e.g. Tamil, Malayalam, Hindi, English">
-  </div>
-</div>
+  Nothing here asks the subject to understand the design. The server fixes the
+  running order, the page walks them through it, and the words "load",
+  "baseline", "session" and "contrast" do not appear.
+#}
 
-<div class="card">
-  <h2>2 · Say this</h2>
-  <div class="field">
-    <select id="prompt">
-      {% for prompt in prompts %}
-        {% set locked = prompt.load == 'automatic' and pinned_automatic and prompt.id != pinned_automatic %}
-        <option value="{{ prompt.id }}" data-kind="{{ prompt.kind }}" data-load="{{ prompt.load or '' }}"
-                {% if locked %}disabled{% endif %}
-                {% if prompt.id == pinned_automatic %}selected{% endif %}>{{ prompt.text }}{% if locked %} — locked, you started with another{% endif %}</option>
-      {% endfor %}
-    </select>
-  </div>
-  <p class="small faint" id="prompt-hint"></p>
-  {% if pinned_automatic %}
-  <p class="small faint">
-    Your easy prompt is fixed to the one you used first. Sittings are compared
-    against each other, so the easy end has to stay put — swapping it would put
-    the task difference back into the result.
+<!-- ------------------------------------------------------------ start -->
+<section id="screen-start">
+  <h1>Record a round</h1>
+  <p class="sub">
+    Three short things to say, about a minute in total. Speak in whatever
+    language you like — nothing you say is written down or read.
   </p>
+
+  {% if rounds_done < rounds_needed %}
+  <div class="note warn">
+    <strong>Round {{ rounds_done + 1 }} of {{ rounds_needed }}.</strong>
+    The first {{ rounds_needed }} rounds are recorded on an ordinary day, so the
+    app learns how you normally sound. Once those are done you can record a
+    round any time you are feeling low.
+  </div>
+  {% else %}
+  <div class="note">
+    <strong>You are all set up.</strong> Record a round whenever you are
+    feeling low — and an ordinary-day round now and then to keep it current.
+  </div>
   {% endif %}
-</div>
 
-<div class="card recorder">
-  <h2>3 · Record</h2>
-  <div class="timer" id="timer">0.0s</div>
-  <div class="hint" id="hint">
-    Ready. You will be asked for microphone access the first time.
+  <div class="card">
+    <h2>How are you feeling right now?</h2>
+    <div class="choices">
+      <button type="button" class="choice" data-label="neutral">
+        <strong>Normal</strong>
+        <span>An ordinary day. Nothing much either way.</span>
+      </button>
+      <button type="button" class="choice" data-label="sad">
+        <strong>Low</strong>
+        <span>Heavy, down, not quite yourself.</span>
+      </button>
+    </div>
+
+    <div id="intensity-row" hidden>
+      <h2 style="margin-top:26px">How strongly?</h2>
+      <div class="choices">
+        <button type="button" class="choice small" data-intensity="1">A little</button>
+        <button type="button" class="choice small" data-intensity="2">Quite a bit</button>
+        <button type="button" class="choice small" data-intensity="3">A lot</button>
+      </div>
+      <p class="small faint">
+        Not feeling it but want to record anyway? Play a song that reliably
+        gets you there, listen properly, then come back. A real mood measures
+        better than a performed one.
+      </p>
+    </div>
+
+    <div class="field" style="margin-top:26px">
+      <label for="language">Which language will you speak? (optional)</label>
+      <input type="text" id="language" value="{{ last_language }}"
+             placeholder="e.g. Tamil, Malayalam, Hindi, English">
+    </div>
+
+    <p style="margin-top:22px">
+      <button class="big" id="begin" disabled>Start</button>
+    </p>
+    <p class="small faint">Your microphone is only used while recording.</p>
   </div>
-  <div class="level"><i id="level-bar"></i></div>
-  <p style="margin-top:22px">
-    <button class="big" id="record-btn">Start recording</button>
-  </p>
-  <p class="small faint" id="status"></p>
-</div>
+</section>
 
-<div class="card">
-  <h2>This sitting</h2>
-  <p class="small faint">
-    A complete sitting is all three, recorded one after another without changing
-    how you feel in between. The pair that matters is the steady one and the
-    animals: how much further apart they sit is the measurement.
-  </p>
-  <ul class="session-check" id="session-check">
-    {% for load, name in [('phonation', 'Sustained “aaah”'),
-                          ('automatic', 'Counting to twenty'),
-                          ('effortful', 'Naming animals')] %}
-    <li data-load="{{ load }}">
-      <span class="tick">○</span> {{ name }}
-      <span class="progress {% if per_load.get(load, 0) >= neutral_target %}met{% endif %}">
-        {{ per_load.get(load, 0) }}/{{ neutral_target }} neutral
-      </span>
-    </li>
-    {% endfor %}
-  </ul>
-  <p class="small faint">
-    Each load keeps its own baseline, so the counts above have to be filled
-    <em>separately</em> — {{ neutral_target }} neutral sittings before any sad
-    recording can be scored. A total across the three does not substitute.
-  </p>
-  <p class="small faint" id="session-note"></p>
-</div>
+<!-- ------------------------------------------------------------- step -->
+<section id="screen-step" hidden>
+  <div class="steps" id="step-dots"></div>
 
+  <div class="card recorder">
+    <p class="step-label">Step <span id="step-n">1</span> of {{ steps|length }}</p>
+    <p class="say-this" id="say-this"></p>
+    <p class="say-hint faint" id="say-hint"></p>
+
+    <div class="timer" id="timer">0.0s</div>
+    <div class="level"><i id="level-bar"></i></div>
+    <p style="margin-top:22px">
+      <button class="big" id="record-btn">Start recording</button>
+    </p>
+    <div class="hint" id="hint">
+      You will be asked for microphone access the first time.
+    </div>
+    <p class="small faint" id="status"></p>
+  </div>
+</section>
+
+<!-- ------------------------------------------------------------- done -->
+<section id="screen-done" hidden>
+  <div class="card">
+    <h1>Round complete</h1>
+    <p class="sub" id="done-msg"></p>
+    <p><button class="big" id="again">Record another round</button></p>
+    <p class="small faint">
+      Each round is recorded in one go. Starting another begins a fresh one.
+    </p>
+  </div>
+</section>
+
+<!-- ---------------------------------------------------------- history -->
 <div class="card">
-  <h2>Your recordings</h2>
+  <h2>Your rounds so far</h2>
   <div class="stats" style="margin-bottom:16px">
-    {% for value, text in labels %}
+    <div class="stat">
+      <div class="value">{{ rounds_done }}</div>
+      <div class="label">ordinary-day rounds</div>
+    </div>
+    {% for value, text in labels if value != 'neutral' %}
       <div class="stat">
         <div class="value">{{ counts.get(value, 0) }}</div>
-        <div class="label">{{ value }}</div>
+        <div class="label">{{ value }} recordings</div>
       </div>
     {% endfor %}
   </div>
   {% if recent %}
   <table>
-    <tr><th>When</th><th>Label</th><th class="num">Length</th><th>Measured</th></tr>
-    {% for rec in recent %}
+    <tr><th>When</th><th>Feeling</th><th class="num">Length</th><th>Measured</th></tr>
+    {% for r in recent %}
     <tr>
-      <td class="mono">{{ rec.created_at[:19].replace('T', ' ') }}</td>
-      <td><span class="pill {{ rec.label }}">{{ rec.label }}</span></td>
-      <td class="num">{{ '%.1f'|format(rec.duration_sec) }}s</td>
+      <td class="mono small">{{ r.created_at[:16].replace('T', ' ') }}</td>
+      <td>{{ r.label }}</td>
+      <td class="num mono">{{ '%.1f'|format(r.duration_sec) }}s</td>
       <td>
-        {% if rec.features_json %}<span class="pill ok">yes</span>
-        {% else %}<span class="pill bad" title="{{ rec.extract_error }}">no</span>{% endif %}
+        {% if r.extract_error %}<span class="pill bad">could not measure</span>
+        {% else %}<span class="pill ok">ok</span>{% endif %}
       </td>
     </tr>
     {% endfor %}
   </table>
-  {% else %}
-  <p class="dim small">Nothing recorded yet.</p>
   {% endif %}
 </div>
 
-<div class="note">
-  Only how your voice sounds is measured — pitch, pace, pauses, steadiness.
-  There is no transcription anywhere in this system, so what you say is never
-  turned into text.
-</div>
-{% endblock %}
-
-{% block scripts %}
 <script type="module">
 import { Recorder } from "{{ url_for('static', filename='recorder.js') }}";
 
 const MIN_SEC = {{ min_record_sec }};
 const MAX_SEC = {{ max_record_sec }};
-const BASELINE_NEEDED = {{ baseline_needed }};
+const ROUNDS_DONE = {{ rounds_done }};
+const ROUNDS_NEEDED = {{ rounds_needed }};
 
-// One sitting = one visit to this page. Reloading deliberately starts a new
-// session rather than resuming: if the page has been reopened, time has passed
-// and the mood that made the first half of the pair is no longer guaranteed.
-const SESSION_ID = (crypto.randomUUID ? crypto.randomUUID()
+// The running order, fixed by the server. Each entry is one step.
+const STEPS = [
+  {% for step in steps %}
+  {
+    id: {{ step.id }},
+    text: {{ step.text|tojson }},
+    hint: {{ ({'phonation': 'One steady note, held as long as is comfortable. Do not let it wobble on purpose.',
+               'automatic': 'Nothing to work out here — just say it at your normal pace.',
+               'effortful': 'This one is meant to be hard. Keep going when you run out; the pauses are the point.'}[step.load])|tojson }},
+  },
+  {% endfor %}
+];
+
+// One round = one visit. Reloading starts a fresh one, which is correct: if
+// the page has been reopened, time has passed and the mood that produced the
+// earlier steps is no longer guaranteed.
+const ROUND_ID = (crypto.randomUUID ? crypto.randomUUID()
   : String(Date.now()) + "-" + Math.random().toString(16).slice(2));
-// Which loads have been captured in THIS sitting, and under which label. A
-// pair is only a pair if both halves carry the same label.
-const done = new Map();
 
+const screens = {
+  start: document.getElementById("screen-start"),
+  step: document.getElementById("screen-step"),
+  done: document.getElementById("screen-done"),
+};
 const btn = document.getElementById("record-btn");
 const timer = document.getElementById("timer");
 const hint = document.getElementById("hint");
 const status = document.getElementById("status");
-const labelSel = document.getElementById("label");
-const promptSel = document.getElementById("prompt");
-const promptHint = document.getElementById("prompt-hint");
-const labelHint = document.getElementById("label-hint");
-const intensityField = document.getElementById("intensity-field");
 const levelBar = document.getElementById("level-bar");
+const sayThis = document.getElementById("say-this");
+const sayHint = document.getElementById("say-hint");
+const stepN = document.getElementById("step-n");
+const dots = document.getElementById("step-dots");
 
+let label = null;
+let intensity = null;
+let step = 0;
 let recorder = null;
 let ticker = null;
 
 /**
- * Tick off one load level for this sitting and say what is still missing.
- * @param {string|undefined} load Load level just recorded.
- * @param {string} label The label it was recorded under.
+ * Show one screen and hide the others.
+ * @param {string} name Key of `screens`.
  */
-function markDone(load, label) {
-  if (load) done.set(load, label);
-  let missing = 0;
-  for (const li of document.querySelectorAll("#session-check li")) {
-    const got = done.get(li.dataset.load);
-    li.querySelector(".tick").textContent = got ? "●" : "○";
-    li.classList.toggle("got", Boolean(got));
-    if (!got) missing += 1;
-  }
-  const note = document.getElementById("session-note");
-  const labels = new Set(done.values());
-  if (missing) {
-    note.textContent = missing + " left in this sitting. Do them now — reloading "
-      + "the page starts a new sitting and the pair is lost.";
-  } else if (labels.size > 1) {
-    // Honest rather than silent: a pair split across two moods is not a pair,
-    // and the analysis will drop it. Better to say so while it can be redone.
-    note.textContent = "Recorded under more than one label (" + [...labels].join(", ")
-      + "). The contrast compares like with like, so this sitting will not pair up. "
-      + "Reload and do all three under one label.";
-  } else {
-    note.textContent = "Complete. Reload the page to start another sitting.";
-  }
+function show(name) {
+  for (const [key, el] of Object.entries(screens)) el.hidden = key !== name;
+  window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
-/** Show the intensity slider only when a label other than neutral is chosen. */
-function syncLabel() {
-  const isNeutral = labelSel.value === "neutral";
-  intensityField.hidden = isNeutral;
-  // The sad hint is a mood-induction cue, not a joke. A portrayed emotion and
-  // a felt one do not sound the same, and everything downstream is measured
-  // against the neutrals recorded here -- so it is worth thirty seconds.
-  labelHint.textContent = isNeutral
-    ? "This is your baseline. Speak the way you normally do — the first "
-      + BASELINE_NEEDED + " neutral recordings are what every other one is compared against."
-    : "Not actually feeling it? Play something that reliably gets you there — "
-      + "“Nallaru Po” does the job for most people — listen to it properly, "
-      + "then come back. A felt mood measures better than a performed one.";
+/** Enable Start once a feeling has been chosen (and graded, if low). */
+function syncStart() {
+  const ready = label === "neutral" || (label === "sad" && intensity !== null);
+  document.getElementById("begin").disabled = !ready;
 }
-labelSel.addEventListener("change", syncLabel);
-syncLabel();
-markDone(undefined, "");
 
-/** Explain what kind of prompt is selected. */
-function syncPrompt() {
-  const opt = promptSel.selectedOptions[0];
-  const load = opt?.dataset.load;
-  promptHint.textContent =
-    load === "phonation"
-      ? "One steady note, held. This is the one that measures the steadiness of your voice, so do not let it wobble on purpose."
-      : load === "automatic"
-      ? "Nothing to work out here — that is the point. This is the easy half of the pair."
-      : load === "effortful"
-      ? "This one is meant to be hard. Keep going when you run dry; the hesitation is the measurement."
-      : "Talk freely for at least " + MIN_SEC + " seconds. Content does not matter — only how it sounds.";
+for (const el of document.querySelectorAll(".choice[data-label]")) {
+  el.addEventListener("click", () => {
+    label = el.dataset.label;
+    for (const other of document.querySelectorAll(".choice[data-label]")) {
+      other.classList.toggle("picked", other === el);
+    }
+    const low = label === "sad";
+    document.getElementById("intensity-row").hidden = !low;
+    if (!low) intensity = null;
+    syncStart();
+  });
 }
-promptSel.addEventListener("change", syncPrompt);
-syncPrompt();
+
+for (const el of document.querySelectorAll(".choice[data-intensity]")) {
+  el.addEventListener("click", () => {
+    intensity = el.dataset.intensity;
+    for (const other of document.querySelectorAll(".choice[data-intensity]")) {
+      other.classList.toggle("picked", other === el);
+    }
+    syncStart();
+  });
+}
+
+/** Paint the current step: its text, its hint, and the progress dots. */
+function renderStep() {
+  sayThis.textContent = STEPS[step].text;
+  sayHint.textContent = STEPS[step].hint;
+  stepN.textContent = String(step + 1);
+  dots.innerHTML = "";
+  STEPS.forEach((_, i) => {
+    const dot = document.createElement("span");
+    dot.className = "dot" + (i < step ? " done" : i === step ? " here" : "");
+    dots.append(dot);
+  });
+  hint.textContent = "Read it, then press the button.";
+  status.textContent = "";
+  timer.textContent = "0.0s";
+}
+
+document.getElementById("begin").addEventListener("click", () => {
+  step = 0;
+  renderStep();
+  show("step");
+});
+
+document.getElementById("again").addEventListener("click", () => {
+  // A new round needs a new id, and the simplest way to be sure of that is a
+  // reload rather than trusting this page to reset every piece of its state.
+  window.location.reload();
+});
 
 /** Format seconds for the timer. @param {number} s Seconds. @returns {string} Text. */
 function fmt(s) { return s.toFixed(1) + "s"; }
 
 btn.addEventListener("click", async () => {
   if (!recorder) {
-    // ---- start ----
     recorder = new Recorder();
     try {
       await recorder.start();
     } catch (err) {
+      hint.textContent = "Could not use the microphone: " + err.message;
       recorder = null;
-      hint.textContent = "Could not open the microphone: " + err.message;
-      if (!window.isSecureContext) {
-        hint.textContent += " (This page must be served over https, or from localhost.)";
-      }
       return;
     }
-    btn.textContent = "Stop and submit";
+    btn.textContent = "Stop";
     btn.classList.add("live");
     timer.classList.add("live");
-    hint.textContent = "Recording. Speak normally.";
-    status.textContent = "";
-
+    hint.textContent = "Recording — press stop when you are finished.";
     ticker = setInterval(() => {
       const secs = recorder.elapsed;
       timer.textContent = fmt(secs);
@@ -264,7 +284,6 @@ btn.addEventListener("click", async () => {
     return;
   }
 
-  // ---- stop ----
   clearInterval(ticker);
   const secs = recorder.elapsed;
   const blob = recorder.stop();
@@ -275,23 +294,22 @@ btn.addEventListener("click", async () => {
   levelBar.style.width = "0";
 
   if (secs < MIN_SEC) {
-    hint.textContent = "That was only " + fmt(secs) + ". Please record at least " + MIN_SEC + " seconds.";
+    hint.textContent = "That was only " + fmt(secs) + ". Please record at least "
+      + MIN_SEC + " seconds — press the button and try again.";
     timer.textContent = "0.0s";
     return;
   }
 
-  hint.textContent = "Uploading…";
+  hint.textContent = "Saving…";
   btn.disabled = true;
 
   const form = new FormData();
   form.append("audio", blob, "sample.wav");
-  form.append("label", labelSel.value);
-  form.append("prompt_id", promptSel.value);
-  form.append("session_id", SESSION_ID);
+  form.append("label", label);
+  form.append("prompt_id", String(STEPS[step].id));
+  form.append("session_id", ROUND_ID);
   form.append("language", document.getElementById("language").value);
-  if (labelSel.value !== "neutral") {
-    form.append("intensity", document.getElementById("intensity").value);
-  }
+  if (intensity !== null) form.append("intensity", intensity);
 
   try {
     const response = await fetch("{{ url_for('upload_recording') }}", { method: "POST", body: form });
@@ -299,24 +317,42 @@ btn.addEventListener("click", async () => {
     if (!response.ok) {
       hint.textContent = "Not saved: " + (body.error || response.status);
     } else if (!body.measured) {
-      // Kept, but the subject should know it did not yield a usable measurement.
-      hint.textContent = "Saved, but it could not be measured — try again somewhere quieter, speaking a little more.";
+      // Kept, but the subject should know it yielded no usable measurement.
+      hint.textContent = "Saved, but it could not be measured. Try that one "
+        + "again somewhere quieter, speaking a little more.";
       status.textContent = body.note || "";
     } else {
-      hint.textContent = "Saved. That is " + body.label_count + " " + body.label + " recording(s).";
-      // Deliberately NOT reloading. A reload mints a fresh SESSION_ID, which
-      // would put every recording in a sitting of its own and leave nothing to
-      // pair -- the contrast needs both halves under one session id. The
-      // recordings table below is therefore one visit out of date; the
-      // checklist is what matters while a sitting is in progress.
-      markDone(promptSel.selectedOptions[0]?.dataset.load, body.label);
+      step += 1;
+      if (step < STEPS.length) {
+        renderStep();
+      } else {
+        finish();
+      }
     }
   } catch (err) {
-    hint.textContent = "Upload failed: " + err.message;
+    hint.textContent = "Could not save: " + err.message;
   } finally {
     btn.disabled = false;
-    timer.textContent = "0.0s";
   }
 });
+
+/** Close out a completed round and say what it counted towards. */
+function finish() {
+  const msg = document.getElementById("done-msg");
+  if (label === "neutral") {
+    const done = ROUNDS_DONE + 1;
+    msg.textContent = done < ROUNDS_NEEDED
+      ? "That is " + done + " of " + ROUNDS_NEEDED + " ordinary-day rounds. "
+        + (ROUNDS_NEEDED - done) + " to go before the app knows how you normally sound."
+      : "That is all " + ROUNDS_NEEDED + " ordinary-day rounds done. From now on, "
+        + "record a round whenever you are feeling low.";
+  } else {
+    msg.textContent = ROUNDS_DONE < ROUNDS_NEEDED
+      ? "Saved. It will be used once you have finished the "
+        + ROUNDS_NEEDED + " ordinary-day rounds."
+      : "Saved, and compared against how you normally sound.";
+  }
+  show("done");
+}
 </script>
 {% endblock %}

@@ -96,6 +96,11 @@
       You will be asked for microphone access the first time.
     </div>
     <p class="small faint" id="status"></p>
+    {# A mis-tapped feeling would mislabel every step of the round, and the
+       subject has no way to tell afterwards. Starting over costs seconds. #}
+    <p class="small faint" style="margin-top:18px">
+      Picked the wrong one? <a href="#" id="restart">Start this round again</a>.
+    </p>
   </div>
 </section>
 
@@ -119,10 +124,14 @@
       <div class="value">{{ rounds_done }}</div>
       <div class="label">ordinary-day rounds</div>
     </div>
+    {# The stored label values are the analysis's vocabulary, not the
+       subject's. 'sad' on a dashboard they see every week is blunter than it
+       needs to be. #}
+    {% set friendly = {'sad': 'low-mood', 'neutral': 'ordinary day'} %}
     {% for value, text in labels if value != 'neutral' %}
       <div class="stat">
         <div class="value">{{ counts.get(value, 0) }}</div>
-        <div class="label">{{ value }} recordings</div>
+        <div class="label">{{ friendly.get(value, value) }} recordings</div>
       </div>
     {% endfor %}
   </div>
@@ -132,7 +141,7 @@
     {% for r in recent %}
     <tr>
       <td class="mono small">{{ r.created_at[:16].replace('T', ' ') }}</td>
-      <td>{{ r.label }}</td>
+      <td>{{ friendly.get(r.label, r.label) }}</td>
       <td class="num mono">{{ '%.1f'|format(r.duration_sec) }}s</td>
       <td>
         {% if r.extract_error %}<span class="pill bad">could not measure</span>
@@ -250,6 +259,13 @@ document.getElementById("begin").addEventListener("click", () => {
   step = 0;
   renderStep();
   show("step");
+});
+
+document.getElementById("restart").addEventListener("click", (event) => {
+  event.preventDefault();
+  // Reload rather than stepping back: anything already uploaded belongs to
+  // this round's id, so a fresh id is the only way to abandon it cleanly.
+  window.location.reload();
 });
 
 document.getElementById("again").addEventListener("click", () => {

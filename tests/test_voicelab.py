@@ -238,13 +238,19 @@ class TestPerLoadBaselines(unittest.TestCase):
         recs = self._neutrals("automatic", "a", 0.30)
         recs += self._neutrals("phonation", "p", 0.004)
 
-        case = recording("sad", "2026-02-01", pause_ratio=0.42)
+        # Deviating *downwards*, which is the direction the absolute signal can
+        # see. VOICE_FEATURE_DIRECTIONS gives pause_ratio -1, and
+        # voice_stress_signal takes max(0, z), so a recording that pauses MORE
+        # than baseline contributes exactly nothing to the score. See
+        # TestArousalClamp below -- that is a property of the parent pipeline,
+        # not of this test.
+        case = recording("sad", "2026-02-01", pause_ratio=0.15)
         case["session_id"], case["load"] = "c1", "automatic"
 
         result = analysis.analyse_subject("p", recs + [case])
         scores = result.case_scores.get("sad", [])
         self.assertEqual(len(scores), 1)
-        # 0.42 against a baseline centred near 0.306 with a spread of
+        # 0.15 against a baseline centred near 0.306 with a spread of
         # thousandths is a large departure, and must be reported as one.
         self.assertGreater(scores[0], 20.0)
 
@@ -267,6 +273,39 @@ class TestPerLoadBaselines(unittest.TestCase):
         result = analysis.analyse_subject("p", recs)
         self.assertTrue(result.control_scores)
         self.assertEqual(result.sessions_paired, 0)
+
+
+class TestArousalClamp(unittest.TestCase):
+    """What the absolute signal can and cannot see, stated as tests.
+
+    Not a complaint about the parent pipeline -- it was built for pressured
+    speech and does that correctly. These exist so nobody reads a page of 0.0
+    scores as "no sadness detected" when it means "sadness moves these features
+    the way this signal discards".
+    """
+
+    def _neutrals(self, **fixed: float) -> list:
+        return [
+            recording("neutral", f"2026-01-0{i}",
+                      pause_ratio=0.30 + 0.004 * i, **fixed)
+            for i in range(1, 6)
+        ]
+
+    def test_more_pausing_than_baseline_scores_zero(self) -> None:
+        """Sadness lengthens pauses. The signal cannot represent that."""
+        case = recording("sad", "2026-02-01", pause_ratio=0.60)
+        result = analysis.analyse_subject("p", self._neutrals() + [case])
+        self.assertEqual(result.case_scores["sad"], [0.0])
+
+    def test_the_feature_table_still_records_the_direction(self) -> None:
+        """The score discards it; the per-feature table must not.
+
+        This is the reason feature_z exists and is not clamped -- it is the
+        only place a departure running against the strain convention survives.
+        """
+        case = recording("sad", "2026-02-01", pause_ratio=0.60)
+        result = analysis.analyse_subject("p", self._neutrals() + [case])
+        self.assertLess(result.feature_z["pause_ratio"]["case"], 0.0)
 
 
 class TestLoadContrast(unittest.TestCase):

@@ -38,11 +38,15 @@ die() { printf '\n\033[1;31mFAILED: %s\033[0m\n' "$*" >&2; exit 1; }
 [ -d "$APP_DIR" ]    || die "$APP_DIR does not exist -- clone the repo first"
 
 # ---------------------------------------------------------------- 1. packages
-say "Installing python venv support"
-if ! dpkg -s python3-venv >/dev/null 2>&1; then
+# Test the capability, do not assume the package. `python3 -m venv` already
+# works on this box, and an apt-get that cannot resolve a name would abort the
+# whole install under `set -e` for a dependency that was never missing.
+if python3 -m venv --help >/dev/null 2>&1; then
+    say "python venv support present"
+else
+    say "Installing python venv support"
     apt-get update -qq
-    apt-get install -y python3-venv python3-dev || \
-        apt-get install -y "python3.14-venv" python3-dev
+    apt-get install -y python3-venv python3-dev         || apt-get install -y "python$(python3 -c 'import sys;print(f"{sys.version_info.major}.{sys.version_info.minor}")')-venv" python3-dev         || die "could not install venv support"
 fi
 
 # ------------------------------------------------------------------- 2. venv

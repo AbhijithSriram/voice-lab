@@ -27,6 +27,7 @@
       {% endfor %}
     </select>
   </div>
+  <p class="small faint" id="label-hint"></p>
   <div class="field" id="intensity-field" hidden>
     <label for="intensity">How strongly are you feeling / portraying it? (0 = barely, 4 = strongly)</label>
     <input type="range" id="intensity" min="0" max="4" value="2" style="width:100%">
@@ -105,6 +106,7 @@ import { Recorder } from "{{ url_for('static', filename='recorder.js') }}";
 
 const MIN_SEC = {{ min_record_sec }};
 const MAX_SEC = {{ max_record_sec }};
+const BASELINE_NEEDED = {{ baseline_needed }};
 
 const btn = document.getElementById("record-btn");
 const timer = document.getElementById("timer");
@@ -113,6 +115,7 @@ const status = document.getElementById("status");
 const labelSel = document.getElementById("label");
 const promptSel = document.getElementById("prompt");
 const promptHint = document.getElementById("prompt-hint");
+const labelHint = document.getElementById("label-hint");
 const intensityField = document.getElementById("intensity-field");
 const levelBar = document.getElementById("level-bar");
 
@@ -121,7 +124,17 @@ let ticker = null;
 
 /** Show the intensity slider only when a label other than neutral is chosen. */
 function syncLabel() {
-  intensityField.hidden = labelSel.value === "neutral";
+  const isNeutral = labelSel.value === "neutral";
+  intensityField.hidden = isNeutral;
+  // The sad hint is a mood-induction cue, not a joke. A portrayed emotion and
+  // a felt one do not sound the same, and everything downstream is measured
+  // against the neutrals recorded here -- so it is worth thirty seconds.
+  labelHint.textContent = isNeutral
+    ? "This is your baseline. Speak the way you normally do — the first "
+      + BASELINE_NEEDED + " neutral recordings are what every other one is compared against."
+    : "Not actually feeling it? Play something that reliably gets you there — "
+      + "“Nallaru Po” does the job for most people — listen to it properly, "
+      + "then come back. A felt mood measures better than a performed one.";
 }
 labelSel.addEventListener("change", syncLabel);
 syncLabel();

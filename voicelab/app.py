@@ -230,6 +230,18 @@ def create_app() -> Flask:
             (g.user["id"],),
         )
         counts = {row["label"]: row["n"] for row in mine}
+        # The automatic prompt this subject first used becomes their anchor,
+        # and the others are locked out. The contrast cancels nuisances inside
+        # a sitting, but comparing one sitting's gap against another's assumes
+        # both measured from the same easy end. Counting on Monday and weekdays
+        # on Tuesday puts the task difference straight back, one level up.
+        anchor = db.query_one(
+            "SELECT r.prompt_id FROM recordings r JOIN prompts p ON p.id = r.prompt_id"
+            " WHERE r.user_id = ? AND p.load = 'automatic'"
+            " ORDER BY r.created_at LIMIT 1",
+            (g.user["id"],),
+        )
+        pinned_automatic = anchor["prompt_id"] if anchor else None
         recent = db.query(
             "SELECT * FROM recordings WHERE user_id = ? ORDER BY created_at DESC LIMIT 10",
             (g.user["id"],),
@@ -240,6 +252,7 @@ def create_app() -> Flask:
             labels=LABELS,
             counts=counts,
             recent=recent,
+            pinned_automatic=pinned_automatic,
             baseline_needed=dsp_settings.VOICE_BASELINE_MIN_SAMPLES,
         )
 

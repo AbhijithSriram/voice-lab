@@ -5,7 +5,16 @@ it is answered.
 
 The method
 ----------
-For each subject, in strict chronological order:
+Everything below runs **once per prompt load**, not once per subject. A
+baseline pools a person's neutral recordings to learn what their voice normally
+does, which only means anything if those recordings are of the same task: a
+sustained vowel, counting and category fluency differ in ``pause_ratio`` by two
+orders of magnitude, so a baseline mixing them measures the difference between
+three tasks and calls it one person's variability. Free prompts and anything
+recorded before loads existed are grouped separately and scored among
+themselves, never folded into a tagged baseline.
+
+Within one load, for each subject, in strict chronological order:
 
 1. Take their **neutral** recordings. The first
    ``VOICE_BASELINE_MIN_SAMPLES`` build the personal baseline and produce no
@@ -107,6 +116,10 @@ BASELINE_LABEL = "neutral"
 # laryngeal rather than cognitive and do not belong on a load axis.
 LOAD_EASY = "automatic"
 LOAD_HARD = "effortful"
+
+# Where free prompts and pre-migration recordings go. They get a baseline among
+# themselves if there are enough, and never contaminate a tagged one.
+UNTAGGED_LOAD = "untagged"
 
 # How each feature moves when a task gets cognitively harder.
 #
@@ -336,28 +349,37 @@ def _load_response(delta: Dict[str, float]) -> Optional[float]:
 
 
 def _contrast_sessions(
-    recordings: Sequence[Dict[str, Any]], baseline: VoiceBaseline, result: SubjectResult
+    recordings: Sequence[Dict[str, Any]],
+    baselines: Dict[str, VoiceBaseline],
+    result: SubjectResult,
 ) -> None:
     """Score every complete sitting's easy/hard contrast onto ``result``.
 
     Args:
         recordings: One subject's usable recordings.
-        baseline: That subject's baseline, already reliable.
+        baselines: Reliable baseline per load. Both halves' loads must be
+            present or the sitting cannot be scored.
         result: Mutated in place.
 
     Note:
-        The measurement is ``z_hard - z_easy`` within one sitting, where both
-        z-scores are taken against the same baseline. Written out, the centre
-        cancels::
+        The measurement is ``z_hard - z_easy`` within one sitting, where each
+        half is scored against **its own load's** baseline::
 
-            (hard - centre) / scale  -  (easy - centre) / scale
-              =  (hard - easy) / scale
+            (hard - centre_hard) / scale_hard  -  (easy - centre_easy) / scale_easy
 
-        so the contrast depends on the baseline's *scale* but not its *centre*.
-        That is the property worth having: baseline drift, a different phone, a
-        noisier room, a bad night's sleep and the subject's own habitual
-        speaking rate all shift both halves together and cancel. Only the
-        scale, which converts the difference into comparable units, survives.
+        Each z therefore reads "how unusual was this recording for this task,
+        for this person", and the difference reads "did the hard task fall
+        further from its own norm today than the easy one did from its own".
+
+        This is a deliberate trade against the earlier single-baseline form,
+        where the shared centre cancelled algebraically and any nuisance
+        shifting both halves equally vanished exactly. With per-load centres
+        that cancellation becomes approximate -- a common shift ``d`` leaves
+        ``d * (1/scale_hard - 1/scale_easy)`` behind. It is still the better
+        deal, because the task effect it now removes exactly is far the larger
+        term: counting and category fluency differ in ``pause_ratio`` by two
+        orders of magnitude, while the two scales are of similar size, so what
+        is left of the nuisance is second order.
 
         A sitting counts only when both halves carry the same label. A pair
         split across two moods is not a pair.
@@ -376,7 +398,14 @@ def _contrast_sessions(
             result.sessions_unpaired += 1
             continue
 
-        z_easy, z_hard = _mean_z(easy, baseline), _mean_z(hard, baseline)
+        baseline_easy = baselines.get(LOAD_EASY)
+        baseline_hard = baselines.get(LOAD_HARD)
+        if baseline_easy is None or baseline_hard is None:
+            result.sessions_unpaired += 1
+            continue
+
+        z_easy = _mean_z(easy, baseline_easy)
+        z_hard = _mean_z(hard, baseline_hard)
         delta = {
             name: z_hard[name] - z_easy[name]
             for name in z_hard
@@ -440,50 +469,47 @@ def _comparison_vector(features: Dict[str, float]) -> Dict[str, float]:
     }
 
 
-def analyse_subject(username: str, recordings: Sequence[Dict[str, Any]]) -> SubjectResult:
-    """Run the leak-free protocol for one subject.
+def _protocol_for_load(
+    username: str,
+    recordings: Sequence[Dict[str, Any]],
+    result: SubjectResult,
+    load: str,
+    control_z: List[Dict[str, float]],
+    case_z: List[Dict[str, float]],
+) -> Optional[VoiceBaseline]:
+    """Run the leak-free protocol within a single load.
 
     Args:
         username: Who.
-        recordings: That subject's recordings, each with ``label``,
-            ``created_at`` and a parsed ``features`` dict. Order does not
-            matter; this function sorts.
+        recordings: This subject's recordings **of one load**, any order.
+        result: Mutated in place with scores and skips.
+        load: The load these recordings share, for skip messages.
+        control_z: Accumulator for control directional z-scores.
+        case_z: Accumulator for case directional z-scores.
 
     Returns:
-        A :class:`SubjectResult`.
+        The settled baseline for this load, or None when too few neutrals.
+
+    Note:
+        One baseline per load, rather than one per subject. A subject's first
+        three neutrals in the old scheme could be a sustained vowel, counting
+        and category fluency, whose ``pause_ratio`` values differ by two orders
+        of magnitude -- 0.004 against 0.647 in the first real sitting recorded
+        on this server. The IQR across that is not this person's variability,
+        it is the difference between three tasks, and every later z-score was
+        divided by it. Comparing like with like is the entire point of a
+        personal baseline; the load is part of "like".
     """
-    result = SubjectResult(username=username)
-
-    usable = []
-    for rec in recordings:
-        if not rec.get("features"):
-            result.skipped.append(
-                f"{rec.get('label', '?')} {rec.get('created_at', '')}: "
-                f"{rec.get('extract_error') or 'no features extracted'}"
-            )
-            continue
-        usable.append(rec)
-
-    usable.sort(key=lambda r: str(r.get("created_at", "")))
-
-    neutral = [r for r in usable if r["label"] == BASELINE_LABEL]
-    cases = [r for r in usable if r["label"] != BASELINE_LABEL]
+    ordered = sorted(recordings, key=lambda r: str(r.get("created_at", "")))
+    neutral = [r for r in ordered if r["label"] == BASELINE_LABEL]
+    cases = [r for r in ordered if r["label"] != BASELINE_LABEL]
 
     baseline = VoiceBaseline(pseudonym_id=username)
     history: List[Dict[str, float]] = []
-    control_z: List[Dict[str, float]] = []
-    case_z: List[Dict[str, float]] = []
 
-    # Neutral recordings, in order: the first few build the baseline, the rest
-    # are scored against it. The build/update split below is copied from
-    # ``voice_pipeline/pipeline.py`` in the parent project so that a result
-    # measured here is a result about that pipeline -- a batch median over the
-    # first N vectors, then an EMA update per vector after that.
     for rec in neutral:
         vector = _comparison_vector(rec["features"])
-
-        # Score first, then absorb: a recording is compared only against
-        # strictly earlier ones.
+        # Score first, then absorb: compared only against strictly earlier ones.
         if baseline.is_reliable:
             outcome = compute_voice_stress_signal(vector, baseline)
             if outcome.is_reliable:
@@ -501,17 +527,19 @@ def analyse_subject(username: str, recordings: Sequence[Dict[str, Any]]) -> Subj
 
     if not baseline.is_reliable:
         result.skipped.append(
-            f"baseline never became reliable: {baseline.sample_count} usable "
-            f"neutral recording(s), {dsp_settings.VOICE_BASELINE_MIN_SAMPLES} needed"
+            f"load {load!r}: baseline never became reliable "
+            f"({baseline.sample_count} usable neutral recording(s), "
+            f"{dsp_settings.VOICE_BASELINE_MIN_SAMPLES} needed) - "
+            f"{len(cases)} case recording(s) at this load unscored"
         )
-        return result
+        return None
 
     for rec in cases:
         vector = _comparison_vector(rec["features"])
         outcome = compute_voice_stress_signal(vector, baseline)
         if not outcome.is_reliable:
             result.skipped.append(
-                f"{rec['label']} {rec.get('created_at', '')}: {outcome.reason}"
+                f"{rec['label']} {rec.get('created_at', '')} ({load}): {outcome.reason}"
             )
             continue
         result.case_scores.setdefault(rec["label"], []).append(
@@ -519,11 +547,52 @@ def analyse_subject(username: str, recordings: Sequence[Dict[str, Any]]) -> Subj
         )
         case_z.append(_directional_z(vector, baseline))
 
-    # The contrast runs against the settled baseline, exactly as the cases do.
-    # Only its scale is used -- the centre cancels in the subtraction -- so the
-    # usual worry about a baseline that has absorbed later samples does not
-    # apply here in the way it applies to an absolute score.
-    _contrast_sessions(usable, baseline, result)
+    return baseline
+
+
+def analyse_subject(username: str, recordings: Sequence[Dict[str, Any]]) -> SubjectResult:
+    """Run the protocol for one subject, one load at a time.
+
+    Args:
+        username: Who.
+        recordings: That subject's recordings, each with ``label``,
+            ``created_at``, ``load`` and a parsed ``features`` dict. Order does
+            not matter; this function sorts.
+
+    Returns:
+        A :class:`SubjectResult`.
+
+    Note:
+        Free prompts and anything recorded before the paired design carry no
+        load. They are grouped under :data:`UNTAGGED_LOAD` and scored among
+        themselves if there are enough of them, rather than being dropped or --
+        worse -- folded into the baseline of a task they do not resemble.
+    """
+    result = SubjectResult(username=username)
+
+    usable = []
+    for rec in recordings:
+        if not rec.get("features"):
+            result.skipped.append(
+                f"{rec.get('label', '?')} {rec.get('created_at', '')}: "
+                f"{rec.get('extract_error') or 'no features extracted'}"
+            )
+            continue
+        usable.append(rec)
+
+    by_load: Dict[str, List[Dict[str, Any]]] = {}
+    for rec in usable:
+        by_load.setdefault(str(rec.get("load") or UNTAGGED_LOAD), []).append(rec)
+
+    control_z: List[Dict[str, float]] = []
+    case_z: List[Dict[str, float]] = []
+    baselines: Dict[str, VoiceBaseline] = {}
+    for load, recs in sorted(by_load.items()):
+        baseline = _protocol_for_load(username, recs, result, load, control_z, case_z)
+        if baseline is not None:
+            baselines[load] = baseline
+
+    _contrast_sessions(usable, baselines, result)
 
     result.feature_z = {
         name: {

@@ -212,89 +212,132 @@ def paired(label: str, when: str, session: str, easy_pause: float,
     return out
 
 
+class TestPerLoadBaselines(unittest.TestCase):
+    """A baseline pools like with like, and the load is part of "like"."""
+
+    def _neutrals(self, load: str, session_prefix: str, pause: float,
+                  n: int = 4, spread: float = 0.004) -> list:
+        """Neutral recordings of one load, tightly clustered."""
+        out = []
+        for i in range(n):
+            rec = recording("neutral", f"2026-01-{i + 1:02d}-{load}",
+                            pause_ratio=pause + spread * i)
+            rec["session_id"] = f"{session_prefix}{i}"
+            rec["load"] = load
+            out.append(rec)
+        return out
+
+    def test_a_distant_load_does_not_inflate_another_loads_scale(self) -> None:
+        """The 0.004-against-0.647 problem, as an assertion.
+
+        Sustained phonation barely pauses; counting pauses constantly. Pooled,
+        the IQR across both is not the subject's variability but the gap
+        between two tasks, and it becomes the divisor for every later z-score.
+        Kept apart, a genuine departure on one load still registers.
+        """
+        recs = self._neutrals("automatic", "a", 0.30)
+        recs += self._neutrals("phonation", "p", 0.004)
+
+        case = recording("sad", "2026-02-01", pause_ratio=0.42)
+        case["session_id"], case["load"] = "c1", "automatic"
+
+        result = analysis.analyse_subject("p", recs + [case])
+        scores = result.case_scores.get("sad", [])
+        self.assertEqual(len(scores), 1)
+        # 0.42 against a baseline centred near 0.306 with a spread of
+        # thousandths is a large departure, and must be reported as one.
+        self.assertGreater(scores[0], 20.0)
+
+    def test_each_load_builds_its_own_baseline(self) -> None:
+        """Three neutrals of one load is a baseline; one each of three is not."""
+        one_each = []
+        for load, pause in (("automatic", 0.30), ("phonation", 0.004), ("effortful", 0.60)):
+            rec = recording("neutral", f"2026-01-01-{load}", pause_ratio=pause)
+            rec["session_id"], rec["load"] = "s1", load
+            one_each.append(rec)
+        result = analysis.analyse_subject("p", one_each)
+        # No load reached the minimum, so nothing is scorable and each load
+        # says so rather than quietly borrowing another's baseline.
+        self.assertEqual(result.control_scores, [])
+        self.assertEqual(len(result.skipped), 3)
+
+    def test_untagged_recordings_are_kept_apart_not_dropped(self) -> None:
+        """Free prompts and pre-migration samples get their own bucket."""
+        recs = [recording("neutral", f"2026-01-0{i}") for i in range(1, 6)]
+        result = analysis.analyse_subject("p", recs)
+        self.assertTrue(result.control_scores)
+        self.assertEqual(result.sessions_paired, 0)
+
+
 class TestLoadContrast(unittest.TestCase):
     """The paired easy/hard design."""
 
-    def _baseline_neutrals(self) -> list:
-        """Enough plain neutrals to make the baseline reliable, with spread."""
-        return [
-            recording("neutral", f"2026-01-0{i}", pause_ratio=0.28 + 0.01 * i)
-            for i in range(1, dsp_settings.VOICE_BASELINE_MIN_SAMPLES + 2)
-        ]
+    WARMUP = dsp_settings.VOICE_BASELINE_MIN_SAMPLES + 2
+
+    def _warmup(self) -> list:
+        """Neutral sittings enough to give both paired loads a baseline."""
+        recs = []
+        for i in range(self.WARMUP):
+            recs += paired("neutral", f"2026-01-{i + 1:02d}", f"w{i}",
+                           0.300 + 0.004 * i, 0.360 + 0.004 * i)
+        return recs
+
+    def _sad(self, easy: float, hard: float) -> list:
+        return paired("sad", "2026-03-01", "d1", easy, hard)
+
+    def _sad_response(self, easy: float, hard: float) -> float:
+        result = analysis.analyse_subject("p", self._warmup() + self._sad(easy, hard))
+        return result.load_response["sad"][0]
 
     def test_a_complete_sitting_is_paired(self) -> None:
-        recs = self._baseline_neutrals()
-        recs += paired("neutral", "2026-02-01", "s1", 0.30, 0.40)
-        result = analysis.analyse_subject("p", recs)
-        self.assertEqual(result.sessions_paired, 1)
+        result = analysis.analyse_subject("p", self._warmup() + self._sad(0.30, 0.40))
+        self.assertEqual(result.sessions_paired, self.WARMUP + 1)
         self.assertEqual(result.sessions_unpaired, 0)
 
     def test_a_half_sitting_is_counted_not_scored(self) -> None:
         """One half is not a pair, and must not be silently treated as one."""
-        recs = self._baseline_neutrals()
-        half = paired("neutral", "2026-02-01", "s1", 0.30, 0.40)[:1]
-        result = analysis.analyse_subject("p", recs + half)
-        self.assertEqual(result.sessions_paired, 0)
+        half = paired("sad", "2026-03-01", "d1", 0.30, 0.40)[:1]
+        result = analysis.analyse_subject("p", self._warmup() + half)
+        self.assertEqual(result.sessions_paired, self.WARMUP)
         self.assertEqual(result.sessions_unpaired, 1)
 
     def test_halves_under_different_labels_do_not_pair(self) -> None:
         """A pair split across two moods is not a pair."""
-        recs = self._baseline_neutrals()
-        easy = paired("neutral", "2026-02-01", "s1", 0.30, 0.40)[0]
-        hard = paired("sad", "2026-02-01", "s1", 0.30, 0.40)[1]
-        result = analysis.analyse_subject("p", recs + [easy, hard])
-        self.assertEqual(result.sessions_paired, 0)
+        easy = paired("neutral", "2026-03-01", "x1", 0.30, 0.40)[0]
+        hard = paired("sad", "2026-03-01", "x1", 0.30, 0.40)[1]
+        result = analysis.analyse_subject("p", self._warmup() + [easy, hard])
         self.assertEqual(result.sessions_unpaired, 2)
 
     def test_recordings_without_a_session_are_ignored_by_the_contrast(self) -> None:
         """Samples predating the paired design must not corrupt it."""
-        recs = self._baseline_neutrals()
+        recs = [recording("neutral", f"2026-01-0{i}") for i in range(1, 6)]
         result = analysis.analyse_subject("p", recs)
         self.assertEqual(result.sessions_paired, 0)
         self.assertEqual(result.load_response, {})
 
     def test_a_wider_gap_when_sad_produces_a_positive_shift(self) -> None:
         """The whole hypothesis, in one assertion."""
-        recs = self._baseline_neutrals()
-        recs += paired("neutral", "2026-02-01", "n1", 0.30, 0.36)
-        recs += paired("sad", "2026-02-02", "d1", 0.30, 0.52)
-        result = analysis.analyse_subject("p", recs)
+        result = analysis.analyse_subject("p", self._warmup() + self._sad(0.30, 0.52))
         contrast = result.load_contrast_dict()
-        self.assertEqual(contrast["sessions_paired"], 2)
         self.assertIsNotNone(contrast["shift"])
         self.assertGreater(contrast["shift"], 0.0)
 
-    def test_the_contrast_ignores_a_shift_affecting_both_halves(self) -> None:
-        """The property the whole design rests on.
+    def test_the_contrast_sees_a_change_in_the_gap(self) -> None:
+        self.assertGreater(self._sad_response(0.30, 0.55), self._sad_response(0.30, 0.35))
 
-        Differencing two z-scores against one baseline cancels its centre, so
-        anything moving both halves together -- a different phone, a noisier
-        room, a bad night's sleep -- must leave the contrast untouched. If this
-        ever fails, the design has lost its only advantage over an absolute
-        score.
+    def test_a_common_shift_moves_it_far_less_than_a_gap_change(self) -> None:
+        """The property the design is built on, stated as it actually holds.
+
+        With one shared baseline the centre cancelled algebraically and a
+        common shift vanished exactly. Per-load centres remove the task effect
+        exactly instead, and leave ``d * (1/scale_hard - 1/scale_easy)`` of a
+        common shift behind. That residue must stay small against a real change
+        in the gap, or the design has lost the robustness it was chosen for.
         """
-        recs = self._baseline_neutrals()
-        plain = analysis.analyse_subject(
-            "p", recs + paired("sad", "2026-02-02", "d1", 0.30, 0.45)
-        ).load_response["sad"]
-
-        # Same 0.15 gap, both halves displaced by the same amount.
-        shifted = analysis.analyse_subject(
-            "p", recs + paired("sad", "2026-02-02", "d1", 0.50, 0.65)
-        ).load_response["sad"]
-
-        self.assertAlmostEqual(plain[0], shifted[0], places=6)
-
-    def test_the_contrast_does_see_a_change_in_the_gap(self) -> None:
-        """The other half of the previous test: it is not simply inert."""
-        recs = self._baseline_neutrals()
-        narrow = analysis.analyse_subject(
-            "p", recs + paired("sad", "2026-02-02", "d1", 0.30, 0.35)
-        ).load_response["sad"]
-        wide = analysis.analyse_subject(
-            "p", recs + paired("sad", "2026-02-02", "d1", 0.30, 0.55)
-        ).load_response["sad"]
-        self.assertGreater(wide[0], narrow[0])
+        base = self._sad_response(0.30, 0.45)
+        shifted = self._sad_response(0.40, 0.55)   # +0.10 on both, gap unchanged
+        widened = self._sad_response(0.30, 0.55)   # +0.10 on the hard half only
+        self.assertLess(abs(shifted - base), abs(widened - base) / 3.0)
 
     def test_load_directions_are_not_the_strain_directions(self) -> None:
         """The bug this test exists to prevent, stated as a contract.
@@ -313,9 +356,10 @@ class TestLoadContrast(unittest.TestCase):
 
     def test_the_positive_control_warns_when_neutrals_show_no_gap(self) -> None:
         """A neutral sitting with no easy/hard gap means the chain is deaf."""
-        recs = self._baseline_neutrals()
-        recs += paired("neutral", "2026-02-01", "n1", 0.30, 0.30)
-        recs += paired("sad", "2026-02-02", "d1", 0.30, 0.31)
+        recs = []
+        for i in range(self.WARMUP):
+            recs += paired("neutral", f"2026-01-{i + 1:02d}", f"w{i}", 0.30, 0.30)
+        recs += paired("sad", "2026-03-01", "d1", 0.30, 0.301)
         report = analysis.run_analysis({"p": recs})
         self.assertTrue(report["load_contrast"]["control_check"].startswith("WARNING"))
 

@@ -140,7 +140,8 @@ DEFAULT_PROMPTS = [
     ),
     (
         "fixed",
-        "Please count slowly from one to twenty, in any language you like.",
+        "Count from one to twenty at a comfortable, even pace, in any language "
+        "you like. Do not draw it out — speak as you normally would.",
         "automatic",
     ),
     (

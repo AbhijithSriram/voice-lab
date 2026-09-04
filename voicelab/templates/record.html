@@ -43,11 +43,21 @@
   <div class="field">
     <select id="prompt">
       {% for prompt in prompts %}
-        <option value="{{ prompt.id }}" data-kind="{{ prompt.kind }}" data-load="{{ prompt.load or '' }}">{{ prompt.text }}</option>
+        {% set locked = prompt.load == 'automatic' and pinned_automatic and prompt.id != pinned_automatic %}
+        <option value="{{ prompt.id }}" data-kind="{{ prompt.kind }}" data-load="{{ prompt.load or '' }}"
+                {% if locked %}disabled{% endif %}
+                {% if prompt.id == pinned_automatic %}selected{% endif %}>{{ prompt.text }}{% if locked %} — locked, you started with another{% endif %}</option>
       {% endfor %}
     </select>
   </div>
   <p class="small faint" id="prompt-hint"></p>
+  {% if pinned_automatic %}
+  <p class="small faint">
+    Your easy prompt is fixed to the one you used first. Sittings are compared
+    against each other, so the easy end has to stay put — swapping it would put
+    the task difference back into the result.
+  </p>
+  {% endif %}
 </div>
 
 <div class="card recorder">

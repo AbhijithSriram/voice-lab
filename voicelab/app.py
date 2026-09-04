@@ -249,7 +249,7 @@ def create_app() -> Flask:
         """Accept one recording.
 
         Body: multipart form with ``audio`` (a WAV file), ``label``,
-        optional ``prompt_id``, ``intensity``, ``language``.
+        optional ``prompt_id``, ``session_id``, ``intensity``, ``language``.
         """
         upload = request.files.get("audio")
         if upload is None:
@@ -266,16 +266,24 @@ def create_app() -> Flask:
 
         prompt_id = request.form.get("prompt_id") or None
         intensity = request.form.get("intensity")
+        # Minted by the browser once per visit to /record and sent back with
+        # every upload from that visit. The pairing it enables is the whole
+        # point of the load contrast, so it is bounded and stored verbatim
+        # rather than parsed -- an unrecognised value costs one session, while
+        # trusting client text into the database costs more than that.
+        session_id = (request.form.get("session_id") or "").strip()[:64] or None
         db.execute(
             "INSERT INTO recordings (user_id, prompt_id, label, intensity, language,"
-            " filename, duration_sec, sample_rate, created_at, features_json, extract_error)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " session_id, filename, duration_sec, sample_rate, created_at, features_json,"
+            " extract_error)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 g.user["id"],
                 int(prompt_id) if prompt_id and prompt_id.isdigit() else None,
                 label,
                 int(intensity) if intensity and intensity.isdigit() else None,
                 (request.form.get("language") or "").strip()[:40] or None,
+                session_id,
                 stored.filename,
                 stored.duration_sec,
                 stored.sample_rate,
@@ -372,9 +380,15 @@ def create_app() -> Flask:
     @admin_required
     def run_analysis_route() -> Any:
         """Run the analysis over every subject and store the result."""
+        # LEFT JOIN, not JOIN: a recording whose prompt was later deactivated
+        # still belongs in the absolute analysis. It drops out of the load
+        # contrast on its own, because `load` comes back NULL.
         rows = db.query(
-            "SELECT u.username, r.label, r.created_at, r.features_json, r.extract_error"
-            " FROM recordings r JOIN users u ON u.id = r.user_id"
+            "SELECT u.username, r.label, r.created_at, r.features_json, r.extract_error,"
+            " r.session_id, p.load"
+            " FROM recordings r"
+            " JOIN users u ON u.id = r.user_id"
+            " LEFT JOIN prompts p ON p.id = r.prompt_id"
             " ORDER BY u.username, r.created_at"
         )
         by_subject: Dict[str, List[Dict[str, Any]]] = {}
@@ -384,6 +398,8 @@ def create_app() -> Flask:
                     "label": row["label"],
                     "created_at": row["created_at"],
                     "extract_error": row["extract_error"],
+                    "session_id": row["session_id"],
+                    "load": row["load"],
                     "features": json.loads(row["features_json"])
                     if row["features_json"]
                     else None,

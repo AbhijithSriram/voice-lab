@@ -43,7 +43,7 @@
   <div class="field">
     <select id="prompt">
       {% for prompt in prompts %}
-        <option value="{{ prompt.id }}" data-kind="{{ prompt.kind }}">{{ prompt.text }}</option>
+        <option value="{{ prompt.id }}" data-kind="{{ prompt.kind }}" data-load="{{ prompt.load or '' }}">{{ prompt.text }}</option>
       {% endfor %}
     </select>
   </div>
@@ -61,6 +61,21 @@
     <button class="big" id="record-btn">Start recording</button>
   </p>
   <p class="small faint" id="status"></p>
+</div>
+
+<div class="card">
+  <h2>This sitting</h2>
+  <p class="small faint">
+    A complete sitting is all three, recorded one after another without changing
+    how you feel in between. The pair that matters is the steady one and the
+    animals: how much further apart they sit is the measurement.
+  </p>
+  <ul class="session-check" id="session-check">
+    <li data-load="phonation"><span class="tick">○</span> Sustained “aaah”</li>
+    <li data-load="automatic"><span class="tick">○</span> Counting or weekdays</li>
+    <li data-load="effortful"><span class="tick">○</span> Naming animals</li>
+  </ul>
+  <p class="small faint" id="session-note"></p>
 </div>
 
 <div class="card">
@@ -108,6 +123,15 @@ const MIN_SEC = {{ min_record_sec }};
 const MAX_SEC = {{ max_record_sec }};
 const BASELINE_NEEDED = {{ baseline_needed }};
 
+// One sitting = one visit to this page. Reloading deliberately starts a new
+// session rather than resuming: if the page has been reopened, time has passed
+// and the mood that made the first half of the pair is no longer guaranteed.
+const SESSION_ID = (crypto.randomUUID ? crypto.randomUUID()
+  : String(Date.now()) + "-" + Math.random().toString(16).slice(2));
+// Which loads have been captured in THIS sitting, and under which label. A
+// pair is only a pair if both halves carry the same label.
+const done = new Map();
+
 const btn = document.getElementById("record-btn");
 const timer = document.getElementById("timer");
 const hint = document.getElementById("hint");
@@ -121,6 +145,36 @@ const levelBar = document.getElementById("level-bar");
 
 let recorder = null;
 let ticker = null;
+
+/**
+ * Tick off one load level for this sitting and say what is still missing.
+ * @param {string|undefined} load Load level just recorded.
+ * @param {string} label The label it was recorded under.
+ */
+function markDone(load, label) {
+  if (load) done.set(load, label);
+  let missing = 0;
+  for (const li of document.querySelectorAll("#session-check li")) {
+    const got = done.get(li.dataset.load);
+    li.querySelector(".tick").textContent = got ? "●" : "○";
+    li.classList.toggle("got", Boolean(got));
+    if (!got) missing += 1;
+  }
+  const note = document.getElementById("session-note");
+  const labels = new Set(done.values());
+  if (missing) {
+    note.textContent = missing + " left in this sitting. Do them now — reloading "
+      + "the page starts a new sitting and the pair is lost.";
+  } else if (labels.size > 1) {
+    // Honest rather than silent: a pair split across two moods is not a pair,
+    // and the analysis will drop it. Better to say so while it can be redone.
+    note.textContent = "Recorded under more than one label (" + [...labels].join(", ")
+      + "). The contrast compares like with like, so this sitting will not pair up. "
+      + "Reload and do all three under one label.";
+  } else {
+    note.textContent = "Complete. Reload the page to start another sitting.";
+  }
+}
 
 /** Show the intensity slider only when a label other than neutral is chosen. */
 function syncLabel() {
@@ -138,13 +192,20 @@ function syncLabel() {
 }
 labelSel.addEventListener("change", syncLabel);
 syncLabel();
+markDone(undefined, "");
 
 /** Explain what kind of prompt is selected. */
 function syncPrompt() {
-  const kind = promptSel.selectedOptions[0]?.dataset.kind;
-  promptHint.textContent = kind === "fixed"
-    ? "Everyone reads this same text, so recordings can be compared directly."
-    : "Talk freely for at least " + MIN_SEC + " seconds. Content does not matter — only how it sounds.";
+  const opt = promptSel.selectedOptions[0];
+  const load = opt?.dataset.load;
+  promptHint.textContent =
+    load === "phonation"
+      ? "One steady note, held. This is the one that measures the steadiness of your voice, so do not let it wobble on purpose."
+      : load === "automatic"
+      ? "Nothing to work out here — that is the point. This is the easy half of the pair."
+      : load === "effortful"
+      ? "This one is meant to be hard. Keep going when you run dry; the hesitation is the measurement."
+      : "Talk freely for at least " + MIN_SEC + " seconds. Content does not matter — only how it sounds.";
 }
 promptSel.addEventListener("change", syncPrompt);
 syncPrompt();
@@ -204,6 +265,7 @@ btn.addEventListener("click", async () => {
   form.append("audio", blob, "sample.wav");
   form.append("label", labelSel.value);
   form.append("prompt_id", promptSel.value);
+  form.append("session_id", SESSION_ID);
   form.append("language", document.getElementById("language").value);
   if (labelSel.value !== "neutral") {
     form.append("intensity", document.getElementById("intensity").value);
@@ -220,8 +282,12 @@ btn.addEventListener("click", async () => {
       status.textContent = body.note || "";
     } else {
       hint.textContent = "Saved. That is " + body.label_count + " " + body.label + " recording(s).";
-      status.textContent = "Record another whenever you like.";
-      setTimeout(() => window.location.reload(), 1200);
+      // Deliberately NOT reloading. A reload mints a fresh SESSION_ID, which
+      // would put every recording in a sitting of its own and leave nothing to
+      // pair -- the contrast needs both halves under one session id. The
+      // recordings table below is therefore one visit out of date; the
+      // checklist is what matters while a sitting is in progress.
+      markDone(promptSel.selectedOptions[0]?.dataset.load, body.label);
     }
   } catch (err) {
     hint.textContent = "Upload failed: " + err.message;

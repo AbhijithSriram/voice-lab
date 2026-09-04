@@ -66,6 +66,94 @@
   {% endif %}
 </div>
 
+{% set lc = report.load_contrast %}
+{% if lc %}
+<div class="card">
+  <h2>Paired load contrast</h2>
+  <p class="small dim" style="margin-top:-6px">
+    Within one sitting, how much further the <strong>effortful</strong> prompt
+    (naming animals) sat from the <strong>automatic</strong> one (counting,
+    weekdays). Both are scored against the same baseline, so its centre cancels
+    and anything shifting both halves together — a different phone, a noisier
+    room, tiredness, habitual speaking rate — cancels with it.
+    <strong>Shift</strong> is the result: how much wider that gap became when
+    the subject was sad.
+  </p>
+
+  {% if lc.control_check.startswith('WARNING') %}
+    <p class="pill bad" style="display:inline-block">{{ lc.control_check }}</p>
+    <p class="small dim">
+      This is the positive control failing. The easy/hard gap is a large effect
+      that is not in doubt, so if neutral sittings do not show it, the chain is
+      not resolving cognitive load — and the sadness numbers above cannot be
+      believed either. Fix this before reading anything else on this page.
+    </p>
+  {% else %}
+    <p class="small faint">{{ lc.control_check }}</p>
+  {% endif %}
+
+  <div class="stats" style="margin:16px 0">
+    <div class="stat">
+      <div class="value">{{ lc.sessions_paired }}</div>
+      <div class="label">paired sittings</div>
+    </div>
+    <div class="stat">
+      <div class="value">{{ lc.neutral_mean if lc.neutral_mean is not none else '—' }}</div>
+      <div class="label">neutral gap</div>
+    </div>
+    <div class="stat">
+      <div class="value">{{ lc.case_mean if lc.case_mean is not none else '—' }}</div>
+      <div class="label">sad gap</div>
+    </div>
+    <div class="stat">
+      <div class="value">
+        {% if lc.shift is none %}—
+        {% elif lc.shift > 0 %}<span class="pos">{{ '%+.3f'|format(lc.shift) }}</span>
+        {% else %}<span class="neg">{{ '%+.3f'|format(lc.shift) }}</span>{% endif %}
+      </div>
+      <div class="label">shift</div>
+    </div>
+    <div class="stat">
+      <div class="value">{{ lc.mean_within_subject_auc if lc.mean_within_subject_auc is not none else '—' }}</div>
+      <div class="label">within-subject AUC</div>
+    </div>
+  </div>
+
+  {% if lc.sessions_unpaired %}
+    <p class="small faint">
+      {{ lc.sessions_unpaired }} sitting(s) discarded — only one half recorded,
+      the two halves labelled differently, or too little of the weighted feature
+      set measurable.
+    </p>
+  {% endif %}
+
+  <table>
+    <tr>
+      <th>Feature</th><th class="num">Weight</th>
+      <th class="num">Neutral Δ</th><th class="num">Sad Δ</th><th class="num">Shift</th>
+    </tr>
+    {% for f in lc.features %}
+    <tr>
+      <td class="mono">{{ f.feature }}</td>
+      <td class="num">{{ f.weight }}</td>
+      <td class="num">{{ f.neutral_delta if f.neutral_delta is not none else '—' }}</td>
+      <td class="num">{{ f.case_delta if f.case_delta is not none else '—' }}</td>
+      <td class="num">
+        {% if f.shift is none %}—
+        {% elif f.shift > 0 %}<span class="pos">{{ '%+.3f'|format(f.shift) }}</span>
+        {% else %}<span class="neg">{{ '%+.3f'|format(f.shift) }}</span>{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  <p class="small faint">
+    Expect the gap to live in <code>pause_ratio</code> and
+    <code>speaking_rate_syllables_per_sec</code>. Jitter and shimmer are
+    laryngeal, not cognitive — the sustained vowel is what carries those.
+  </p>
+</div>
+{% endif %}
+
 <div class="card">
   <h2>Per feature</h2>
   <p class="small dim" style="margin-top:-6px">

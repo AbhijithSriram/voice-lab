@@ -41,6 +41,39 @@ Per subject and pooled:
   and *which way*, and a feature moving the opposite way from
   ``VOICE_FEATURE_DIRECTIONS`` is a finding, not a failure.
 
+The paired load contrast
+------------------------
+The protocol above measures a *level*: how far a sad recording sits from a
+neutral baseline. That level is only comparable if recording conditions hold
+still, and they do not -- subjects record on their own phones, in their own
+rooms, at their own hours.
+
+So each sitting also captures a pair: an **automatic** prompt (counting,
+weekdays -- overlearned, no retrieval) and an **effortful** one (naming
+animals -- category fluency, reliably impaired in depression). The measurement
+is the gap between them::
+
+    delta  = z(effortful) - z(automatic)          within one sitting
+    signal = mean(delta | sad) - mean(delta | neutral)
+
+Because both halves are scored against the same baseline, the baseline centre
+cancels and only its scale survives. Anything that shifts both halves together
+-- a different phone, a noisier room, tiredness, caffeine, the subject's own
+habitual speaking rate, their language -- cancels with it. A difference is a
+far more robust thing to measure than a level when conditions cannot be
+controlled, and here they cannot.
+
+It doubles as a **positive control**. The easy/hard gap is a large effect whose
+existence is not in question, so it can be checked independently: if neutral
+sittings show no gap, the chain is not resolving cognitive load, and nothing
+subtler it reports about sadness can be believed. ``control_check`` in the
+report says so in as many words.
+
+The contrast covers rate and pause structure (0.30 of the feature weight). It
+says nothing about jitter and shimmer (0.38), which are laryngeal rather than
+cognitive -- that is what the sustained-vowel prompt is for, and why it is not
+part of the pair.
+
 A caution about what a good result would mean
 ---------------------------------------------
 Subjects are asked to *speak as they would when sad*. That is performed
@@ -69,6 +102,18 @@ from voicelab.dsp.voice_stress_signal import compute_voice_stress_signal
 # The label that builds the baseline. Everything else is a case.
 BASELINE_LABEL = "neutral"
 
+# The two prompt loads the contrast is built from. 'phonation' is deliberately
+# not one of them: a sustained vowel carries jitter and shimmer, which are
+# laryngeal rather than cognitive and do not belong on a load axis.
+LOAD_EASY = "automatic"
+LOAD_HARD = "effortful"
+
+# A session must supply at least this share of the weighted feature set on both
+# halves before its contrast is scored. Same reasoning as MIN_AVAILABLE_WEIGHT
+# in voice_stress_signal: below half the weight, the number is a different
+# measurement wearing the same name.
+MIN_CONTRAST_WEIGHT = 0.5
+
 
 @dataclass
 class SubjectResult:
@@ -89,6 +134,12 @@ class SubjectResult:
     case_scores: Dict[str, List[float]] = field(default_factory=dict)
     feature_z: Dict[str, Dict[str, float]] = field(default_factory=dict)
     skipped: List[str] = field(default_factory=list)
+    # Paired-load results, keyed by label: one load-response value per complete
+    # sitting, and the per-feature deltas behind them.
+    load_response: Dict[str, List[float]] = field(default_factory=dict)
+    load_feature_delta: Dict[str, Dict[str, List[float]]] = field(default_factory=dict)
+    sessions_paired: int = 0
+    sessions_unpaired: int = 0
 
     @property
     def all_case_scores(self) -> List[float]:
@@ -123,7 +174,34 @@ class SubjectResult:
                 for label, scores in sorted(self.case_scores.items())
             },
             "feature_z": self.feature_z,
+            "load_contrast": self.load_contrast_dict(),
             "skipped": self.skipped,
+        }
+
+    def load_contrast_dict(self) -> Dict[str, Any]:
+        """The paired-load result for this subject.
+
+        Returns:
+            Per-label mean load response, the neutral-to-case shift, and the
+            AUC separating individual sittings. ``shift`` is the headline:
+            how much further the hard prompt sat from the easy one when the
+            subject was sad than when they were neutral.
+        """
+        neutral = self.load_response.get(BASELINE_LABEL, [])
+        cases = [v for label, vals in self.load_response.items()
+                 if label != BASELINE_LABEL for v in vals]
+        return {
+            "sessions_paired": self.sessions_paired,
+            "sessions_unpaired": self.sessions_unpaired,
+            "by_label": {
+                label: {"n": len(vals), "mean": round(float(np.mean(vals)), 3)}
+                for label, vals in sorted(self.load_response.items())
+            },
+            "neutral_mean": round(float(np.mean(neutral)), 3) if neutral else None,
+            "case_mean": round(float(np.mean(cases)), 3) if cases else None,
+            "shift": round(float(np.mean(cases) - np.mean(neutral)), 3)
+            if neutral and cases else None,
+            "auc": auc(neutral, cases),
         }
 
 
@@ -183,6 +261,116 @@ def _directional_z(
         direction = dsp_settings.VOICE_FEATURE_DIRECTIONS.get(name, 1)
         out[name] = float(direction * (value - centre) / scale)
     return out
+
+
+def _mean_z(
+    recordings: Sequence[Dict[str, Any]], baseline: VoiceBaseline
+) -> Dict[str, float]:
+    """Mean directional z per feature over several recordings.
+
+    Args:
+        recordings: Recordings sharing a load level within one sitting.
+        baseline: The subject's baseline.
+
+    Returns:
+        Feature name to mean directional z. A sitting normally holds one
+        recording per load, but a subject who records the easy prompt twice
+        should not have the second one ignored.
+    """
+    stacked: Dict[str, List[float]] = {}
+    for rec in recordings:
+        for name, value in _directional_z(_comparison_vector(rec["features"]), baseline).items():
+            stacked.setdefault(name, []).append(value)
+    return {name: float(np.mean(vals)) for name, vals in stacked.items() if vals}
+
+
+def _load_response(delta: Dict[str, float]) -> Optional[float]:
+    """Collapse a per-feature load delta to one number.
+
+    Args:
+        delta: Feature name to (hard z - easy z).
+
+    Returns:
+        The weighted mean delta, renormalised over whichever features were
+        available, or None when too little of the weighted set survived.
+
+    Note:
+        Reuses ``VOICE_FEATURE_WEIGHTS``, which were tuned for the strain
+        signal rather than for cognitive load. That is a deliberate default,
+        not a claim: it keeps this number on the same footing as every other
+        score in the pipeline, and the per-feature table underneath is where
+        you look to see whether the load actually landed on the features the
+        weights emphasise.
+    """
+    total = 0.0
+    available = 0.0
+    for name, value in delta.items():
+        weight = dsp_settings.VOICE_FEATURE_WEIGHTS.get(name)
+        if weight is None or not math.isfinite(value):
+            continue
+        total += weight * value
+        available += weight
+    if available < MIN_CONTRAST_WEIGHT:
+        return None
+    return float(total / available)
+
+
+def _contrast_sessions(
+    recordings: Sequence[Dict[str, Any]], baseline: VoiceBaseline, result: SubjectResult
+) -> None:
+    """Score every complete sitting's easy/hard contrast onto ``result``.
+
+    Args:
+        recordings: One subject's usable recordings.
+        baseline: That subject's baseline, already reliable.
+        result: Mutated in place.
+
+    Note:
+        The measurement is ``z_hard - z_easy`` within one sitting, where both
+        z-scores are taken against the same baseline. Written out, the centre
+        cancels::
+
+            d * (hard - centre) / scale  -  d * (easy - centre) / scale
+              =  d * (hard - easy) / scale
+
+        so the contrast depends on the baseline's *scale* but not its *centre*.
+        That is the property worth having: baseline drift, a different phone, a
+        noisier room, a bad night's sleep and the subject's own habitual
+        speaking rate all shift both halves together and cancel. Only the
+        scale, which converts the difference into comparable units, survives.
+
+        A sitting counts only when both halves carry the same label. A pair
+        split across two moods is not a pair.
+    """
+    sessions: Dict[Tuple[str, str], Dict[str, List[Dict[str, Any]]]] = {}
+    for rec in recordings:
+        session_id = rec.get("session_id")
+        load = rec.get("load")
+        if not session_id or load not in (LOAD_EASY, LOAD_HARD):
+            continue
+        sessions.setdefault((str(session_id), str(rec["label"])), {}).setdefault(load, []).append(rec)
+
+    for (_session_id, label), halves in sorted(sessions.items()):
+        easy, hard = halves.get(LOAD_EASY), halves.get(LOAD_HARD)
+        if not easy or not hard:
+            result.sessions_unpaired += 1
+            continue
+
+        z_easy, z_hard = _mean_z(easy, baseline), _mean_z(hard, baseline)
+        delta = {
+            name: z_hard[name] - z_easy[name]
+            for name in z_hard
+            if name in z_easy
+        }
+        response = _load_response(delta)
+        if response is None:
+            result.sessions_unpaired += 1
+            continue
+
+        result.sessions_paired += 1
+        result.load_response.setdefault(label, []).append(round(response, 3))
+        for name, value in delta.items():
+            result.load_feature_delta.setdefault(name, {}).setdefault(label, []).append(value)
 
 
 def _comparison_vector(features: Dict[str, float]) -> Dict[str, float]:
@@ -280,6 +468,12 @@ def analyse_subject(username: str, recordings: Sequence[Dict[str, Any]]) -> Subj
         )
         case_z.append(_directional_z(vector, baseline))
 
+    # The contrast runs against the settled baseline, exactly as the cases do.
+    # Only its scale is used -- the centre cancels in the subtraction -- so the
+    # usual worry about a baseline that has absorbed later samples does not
+    # apply here in the way it applies to an absolute score.
+    _contrast_sessions(usable, baseline, result)
+
     result.feature_z = {
         name: {
             "control": round(float(np.mean([z[name] for z in control_z if name in z])), 3)
@@ -336,8 +530,66 @@ def run_analysis(by_subject: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
     # Largest positive shift first: the features actually carrying the result.
     feature_rows.sort(key=lambda r: (r["shift"] is None, -(r["shift"] or 0)))
 
+    # --- paired load contrast, pooled -----------------------------------
+    contrast_neutral = [v for s in subjects for v in s.load_response.get(BASELINE_LABEL, [])]
+    contrast_cases = [
+        v for s in subjects for label, vals in s.load_response.items()
+        if label != BASELINE_LABEL for v in vals
+    ]
+    contrast_subject_aucs = [
+        a for a in (
+            auc(
+                s.load_response.get(BASELINE_LABEL, []),
+                [v for lbl, vals in s.load_response.items() if lbl != BASELINE_LABEL for v in vals],
+            )
+            for s in subjects
+        ) if a is not None
+    ]
+    contrast_rows = []
+    for name in dsp_settings.VOICE_COMPARISON_FEATURE_NAMES:
+        per_label = {}
+        for s in subjects:
+            for label, vals in s.load_feature_delta.get(name, {}).items():
+                per_label.setdefault(label, []).extend(vals)
+        neutral = per_label.get(BASELINE_LABEL, [])
+        cases = [v for lbl, vals in per_label.items() if lbl != BASELINE_LABEL for v in vals]
+        contrast_rows.append({
+            "feature": name,
+            "weight": dsp_settings.VOICE_FEATURE_WEIGHTS.get(name),
+            "neutral_delta": round(float(np.mean(neutral)), 3) if neutral else None,
+            "case_delta": round(float(np.mean(cases)), 3) if cases else None,
+            "shift": round(float(np.mean(cases) - np.mean(neutral)), 3)
+            if neutral and cases else None,
+        })
+    contrast_rows.sort(key=lambda r: (r["shift"] is None, -(r["shift"] or 0)))
+
     return {
         "subjects": [s.to_dict() for s in subjects],
+        "load_contrast": {
+            "sessions_paired": sum(s.sessions_paired for s in subjects),
+            "sessions_unpaired": sum(s.sessions_unpaired for s in subjects),
+            "neutral_n": len(contrast_neutral),
+            "case_n": len(contrast_cases),
+            "neutral_mean": round(float(np.mean(contrast_neutral)), 3) if contrast_neutral else None,
+            "case_mean": round(float(np.mean(contrast_cases)), 3) if contrast_cases else None,
+            "shift": round(float(np.mean(contrast_cases) - np.mean(contrast_neutral)), 3)
+            if contrast_neutral and contrast_cases else None,
+            "pooled_auc": auc(contrast_neutral, contrast_cases),
+            "mean_within_subject_auc": round(float(np.mean(contrast_subject_aucs)), 3)
+            if contrast_subject_aucs else None,
+            "features": contrast_rows,
+            # The positive control. The easy/hard gap is a large effect that is
+            # not in doubt, so a neutral_mean indistinguishable from zero means
+            # the measurement chain is not resolving cognitive load at all --
+            # and nothing subtler it reports can be believed.
+            "control_check": (
+                "no paired sittings yet" if not contrast_neutral
+                else "load detected in neutral sittings"
+                if abs(float(np.mean(contrast_neutral))) >= 0.25
+                else "WARNING: neutral sittings show almost no easy/hard gap; "
+                     "the pipeline is not resolving a large known effect"
+            ),
+        },
         "summary": {
             "subjects_total": len(subjects),
             "subjects_scored": len(scored),
@@ -386,10 +638,17 @@ def summarise(report: Dict[str, Any]) -> str:
         A short summary string.
     """
     s = report["summary"]
+    contrast = report.get("load_contrast", {})
     if s["separation"] is None:
         return f"{s['subjects_total']} subject(s), nothing scorable yet"
-    return (
+    line = (
         f"{s['subjects_scored']}/{s['subjects_total']} subjects scored - "
         f"separation {s['separation']:+.1f} pts, "
         f"within-subject AUC {s['mean_within_subject_auc']}"
     )
+    if contrast.get("shift") is not None:
+        line += (
+            f"; load contrast {contrast['shift']:+.2f} over "
+            f"{contrast['sessions_paired']} paired sitting(s)"
+        )
+    return line

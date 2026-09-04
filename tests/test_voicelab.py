@@ -188,6 +188,123 @@ class TestLeakFreeBaseline(unittest.TestCase):
         self.assertGreater(max(result.all_case_scores), 40.0)
 
 
+def paired(label: str, when: str, session: str, easy_pause: float,
+           hard_pause: float, **features: float) -> list:
+    """One complete sitting: an automatic half and an effortful half.
+
+    Args:
+        label: Label both halves carry.
+        when: ISO timestamp prefix; the two halves are ordered under it.
+        session: Session id shared by both halves.
+        easy_pause: ``pause_ratio`` for the automatic prompt.
+        hard_pause: ``pause_ratio`` for the effortful prompt.
+        **features: Applied to both halves.
+
+    Returns:
+        Two recording rows.
+    """
+    out = []
+    for load, pause in (("automatic", easy_pause), ("effortful", hard_pause)):
+        rec = recording(label, f"{when}-{load}", pause_ratio=pause, **features)
+        rec["session_id"] = session
+        rec["load"] = load
+        out.append(rec)
+    return out
+
+
+class TestLoadContrast(unittest.TestCase):
+    """The paired easy/hard design."""
+
+    def _baseline_neutrals(self) -> list:
+        """Enough plain neutrals to make the baseline reliable, with spread."""
+        return [
+            recording("neutral", f"2026-01-0{i}", pause_ratio=0.28 + 0.01 * i)
+            for i in range(1, dsp_settings.VOICE_BASELINE_MIN_SAMPLES + 2)
+        ]
+
+    def test_a_complete_sitting_is_paired(self) -> None:
+        recs = self._baseline_neutrals()
+        recs += paired("neutral", "2026-02-01", "s1", 0.30, 0.40)
+        result = analysis.analyse_subject("p", recs)
+        self.assertEqual(result.sessions_paired, 1)
+        self.assertEqual(result.sessions_unpaired, 0)
+
+    def test_a_half_sitting_is_counted_not_scored(self) -> None:
+        """One half is not a pair, and must not be silently treated as one."""
+        recs = self._baseline_neutrals()
+        half = paired("neutral", "2026-02-01", "s1", 0.30, 0.40)[:1]
+        result = analysis.analyse_subject("p", recs + half)
+        self.assertEqual(result.sessions_paired, 0)
+        self.assertEqual(result.sessions_unpaired, 1)
+
+    def test_halves_under_different_labels_do_not_pair(self) -> None:
+        """A pair split across two moods is not a pair."""
+        recs = self._baseline_neutrals()
+        easy = paired("neutral", "2026-02-01", "s1", 0.30, 0.40)[0]
+        hard = paired("sad", "2026-02-01", "s1", 0.30, 0.40)[1]
+        result = analysis.analyse_subject("p", recs + [easy, hard])
+        self.assertEqual(result.sessions_paired, 0)
+        self.assertEqual(result.sessions_unpaired, 2)
+
+    def test_recordings_without_a_session_are_ignored_by_the_contrast(self) -> None:
+        """Samples predating the paired design must not corrupt it."""
+        recs = self._baseline_neutrals()
+        result = analysis.analyse_subject("p", recs)
+        self.assertEqual(result.sessions_paired, 0)
+        self.assertEqual(result.load_response, {})
+
+    def test_a_wider_gap_when_sad_produces_a_positive_shift(self) -> None:
+        """The whole hypothesis, in one assertion."""
+        recs = self._baseline_neutrals()
+        recs += paired("neutral", "2026-02-01", "n1", 0.30, 0.36)
+        recs += paired("sad", "2026-02-02", "d1", 0.30, 0.52)
+        result = analysis.analyse_subject("p", recs)
+        contrast = result.load_contrast_dict()
+        self.assertEqual(contrast["sessions_paired"], 2)
+        self.assertIsNotNone(contrast["shift"])
+        self.assertGreater(contrast["shift"], 0.0)
+
+    def test_the_contrast_ignores_a_shift_affecting_both_halves(self) -> None:
+        """The property the whole design rests on.
+
+        Differencing two z-scores against one baseline cancels its centre, so
+        anything moving both halves together -- a different phone, a noisier
+        room, a bad night's sleep -- must leave the contrast untouched. If this
+        ever fails, the design has lost its only advantage over an absolute
+        score.
+        """
+        recs = self._baseline_neutrals()
+        plain = analysis.analyse_subject(
+            "p", recs + paired("sad", "2026-02-02", "d1", 0.30, 0.45)
+        ).load_response["sad"]
+
+        # Same 0.15 gap, both halves displaced by the same amount.
+        shifted = analysis.analyse_subject(
+            "p", recs + paired("sad", "2026-02-02", "d1", 0.50, 0.65)
+        ).load_response["sad"]
+
+        self.assertAlmostEqual(plain[0], shifted[0], places=6)
+
+    def test_the_contrast_does_see_a_change_in_the_gap(self) -> None:
+        """The other half of the previous test: it is not simply inert."""
+        recs = self._baseline_neutrals()
+        narrow = analysis.analyse_subject(
+            "p", recs + paired("sad", "2026-02-02", "d1", 0.30, 0.35)
+        ).load_response["sad"]
+        wide = analysis.analyse_subject(
+            "p", recs + paired("sad", "2026-02-02", "d1", 0.30, 0.55)
+        ).load_response["sad"]
+        self.assertGreater(wide[0], narrow[0])
+
+    def test_the_positive_control_warns_when_neutrals_show_no_gap(self) -> None:
+        """A neutral sitting with no easy/hard gap means the chain is deaf."""
+        recs = self._baseline_neutrals()
+        recs += paired("neutral", "2026-02-01", "n1", 0.30, 0.30)
+        recs += paired("sad", "2026-02-02", "d1", 0.30, 0.31)
+        report = analysis.run_analysis({"p": recs})
+        self.assertTrue(report["load_contrast"]["control_check"].startswith("WARNING"))
+
+
 class TestAuc(unittest.TestCase):
     """The separation metric."""
 

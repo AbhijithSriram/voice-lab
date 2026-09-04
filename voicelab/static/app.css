@@ -135,6 +135,16 @@ tr:last-child td { border-bottom: none; }
 .pos { color: var(--ok); }
 .neg { color: var(--live); }
 
+/* The sitting checklist. Three loads, ticked as each is captured. */
+.session-check { list-style: none; padding: 0; margin: 14px 0; }
+.session-check li {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 0; color: var(--dim); font-size: 14px;
+}
+.session-check li .tick { color: var(--faint); font-size: 15px; width: 16px; }
+.session-check li.got { color: var(--text); }
+.session-check li.got .tick { color: var(--ok); }
+
 @media (max-width: 620px) {
   main { padding: 18px 14px 60px; }
   .timer { font-size: 34px; }

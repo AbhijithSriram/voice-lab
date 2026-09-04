@@ -38,6 +38,14 @@ CREATE TABLE IF NOT EXISTS prompts (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
     kind      TEXT NOT NULL,          -- 'fixed' or 'free'
     text      TEXT NOT NULL,
+    -- Cognitive load, and the axis the paired design turns on:
+    --   'phonation'  a sustained vowel; carries jitter and shimmer
+    --   'automatic'  overlearned speech (counting, weekdays); no retrieval
+    --   'effortful'  verbal fluency; retrieval under load
+    --   NULL         free prompts, kept for variety, excluded from the contrast
+    -- Orthogonal to `kind`: 'fixed' vs 'free' is about whether everyone says
+    -- the same words, `load` is about how hard it is to produce them.
+    load      TEXT,
     is_active INTEGER NOT NULL DEFAULT 1
 );
 
@@ -53,6 +61,12 @@ CREATE TABLE IF NOT EXISTS recordings (
     -- so it is context, not ground truth.
     intensity     INTEGER,
     language      TEXT,
+    -- One sitting. The paired design compares an 'effortful' recording against
+    -- an 'automatic' one made minutes apart in the same mood, so the two have
+    -- to be identifiable as a pair. Grouping by timestamp proximity was the
+    -- alternative and it breaks the first time somebody takes a phone call
+    -- halfway through and comes back twenty minutes later.
+    session_id    TEXT,
     filename      TEXT    NOT NULL,
     duration_sec  REAL,
     sample_rate   INTEGER,
@@ -69,6 +83,7 @@ CREATE TABLE IF NOT EXISTS recordings (
 );
 
 CREATE INDEX IF NOT EXISTS idx_recordings_user ON recordings(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_recordings_session ON recordings(user_id, session_id);
 
 CREATE TABLE IF NOT EXISTS analyses (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -90,13 +105,61 @@ CREATE TABLE IF NOT EXISTS analyses (
 # honest prosody but less comparability. Both are collected because it is not
 # obvious in advance which will separate better -- and finding that out is
 # itself a result.
+# The prompt bank. Each row is (kind, text, load).
+#
+# The three loads are the experiment, not decoration:
+#
+#   phonation   Jitter and shimmer are defined on sustained phonation and carry
+#               0.38 of the feature weight. Measured on connected speech they
+#               pick up intonation and voicing onsets instead of the larynx.
+#   automatic   Overlearned sequences need no retrieval at all -- in neurology
+#               these survive severe aphasia. This is the true floor of
+#               cognitive load, and the anchor the effortful prompt is
+#               measured against.
+#   effortful   Category fluency is a standard neuropsychological measure,
+#               reliably impaired in depression, and emotionally inert. The
+#               pauses are the mechanism rather than a proxy: as retrieval gets
+#               harder, inter-word intervals lengthen directly.
+#
+# The effortful prompt is deliberately NOT autobiographical. "The last time you
+# called your mother" is harder *and* emotionally loaded -- homesickness,
+# estrangement, bereavement -- so a lengthened pause could not be attributed to
+# cognitive difficulty rather than reactivity to the topic. For a system aimed
+# at personnel posted away from home that confound is not hypothetical, and the
+# question is one no welfare tool should be putting to a bereaved subject.
 DEFAULT_PROMPTS = [
-    ("fixed", "Please count slowly from one to twenty, in any language you like."),
-    ("fixed", "Say the days of the week, twice, at whatever pace feels natural."),
-    ("fixed", "Read this aloud: 'The train leaves at seven in the morning and arrives late in the evening.'"),
-    ("free", "Describe what you did yesterday, in as much detail as you like."),
-    ("free", "Describe the room you are sitting in right now."),
-    ("free", "Talk about a place you would like to travel to, and why."),
+    (
+        "fixed",
+        "Take a breath, then hold a steady “aaah” for as long as it stays "
+        "comfortable — at least eight seconds. One steady note, not a tune.",
+        "phonation",
+    ),
+    (
+        "fixed",
+        "Please count slowly from one to twenty, in any language you like.",
+        "automatic",
+    ),
+    (
+        "fixed",
+        "Say the days of the week, twice, at whatever pace feels natural.",
+        "automatic",
+    ),
+    (
+        "fixed",
+        "Read this aloud, twice: ‘The train leaves at seven in the morning and "
+        "arrives late in the evening. It is a long journey, but the seats are "
+        "comfortable enough to sleep.’",
+        "automatic",
+    ),
+    (
+        "fixed",
+        "Name as many animals as you can, out loud, until you are asked to stop. "
+        "Any language. If you run out, keep trying — the pauses are the point.",
+        "effortful",
+    ),
+    ("free", "Describe what you did yesterday, in as much detail as you like.", None),
+    ("free", "Describe the room you are sitting in right now.", None),
+    ("free", "Talk about a place you would like to travel to, and why.", None),
 ]
 
 
@@ -117,8 +180,81 @@ def connect(path: Optional[Path] = None) -> sqlite3.Connection:
     return conn
 
 
+def _columns(conn: sqlite3.Connection, table: str) -> set:
+    """Column names on a table.
+
+    Args:
+        conn: Open connection.
+        table: Table name.
+
+    Returns:
+        Set of column names.
+    """
+    return {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Bring an existing database up to the current schema.
+
+    Args:
+        conn: Open connection, inside a transaction.
+
+    Note:
+        ``CREATE TABLE IF NOT EXISTS`` in :data:`SCHEMA` does nothing to a table
+        that already exists, so columns added after a database was first
+        created have to be added here. Both are nullable with no default, which
+        is what makes them safe to add to a populated table: recordings made
+        before the paired design simply have ``session_id IS NULL`` and drop out
+        of the contrast analysis rather than corrupting it.
+    """
+    if "load" not in _columns(conn, "prompts"):
+        conn.execute("ALTER TABLE prompts ADD COLUMN load TEXT")
+    if "session_id" not in _columns(conn, "recordings"):
+        conn.execute("ALTER TABLE recordings ADD COLUMN session_id TEXT")
+
+
+def _sync_prompts(conn: sqlite3.Connection) -> None:
+    """Make the prompts table match :data:`DEFAULT_PROMPTS`.
+
+    Args:
+        conn: Open connection, inside a transaction.
+
+    Note:
+        The bank is defined in code and this table is a cache of it, so a
+        prompt whose wording changes is matched by text and re-inserted rather
+        than edited in place.
+
+        Prompts no longer in the bank are **deactivated, never deleted**.
+        ``recordings.prompt_id`` points at them, and an analysis that cannot
+        say which prompt produced a sample is an analysis of nothing --
+        particularly here, where the prompt's load level is the independent
+        variable.
+    """
+    wanted = {text: (kind, load) for kind, text, load in DEFAULT_PROMPTS}
+    existing = {
+        row["text"]: row for row in conn.execute("SELECT id, text, kind, load, is_active FROM prompts")
+    }
+
+    for text, (kind, load) in wanted.items():
+        row = existing.get(text)
+        if row is None:
+            conn.execute(
+                "INSERT INTO prompts (kind, text, load, is_active) VALUES (?, ?, ?, 1)",
+                (kind, text, load),
+            )
+        elif (row["kind"], row["load"], row["is_active"]) != (kind, load, 1):
+            conn.execute(
+                "UPDATE prompts SET kind = ?, load = ?, is_active = 1 WHERE id = ?",
+                (kind, load, row["id"]),
+            )
+
+    for text, row in existing.items():
+        if text not in wanted and row["is_active"]:
+            conn.execute("UPDATE prompts SET is_active = 0 WHERE id = ?", (row["id"],))
+
+
 def init_db(path: Optional[Path] = None) -> None:
-    """Create the schema and seed the prompt bank if it is empty.
+    """Create the schema, migrate an older one, and sync the prompt bank.
 
     Args:
         path: Database file. Defaults to ``config.DB_PATH``.
@@ -126,12 +262,8 @@ def init_db(path: Optional[Path] = None) -> None:
     conn = connect(path)
     with conn:
         conn.executescript(SCHEMA)
-        existing = conn.execute("SELECT COUNT(*) AS n FROM prompts").fetchone()["n"]
-        if existing == 0:
-            conn.executemany(
-                "INSERT INTO prompts (kind, text, is_active) VALUES (?, ?, 1)",
-                DEFAULT_PROMPTS,
-            )
+        _migrate(conn)
+        _sync_prompts(conn)
     conn.close()
 
 

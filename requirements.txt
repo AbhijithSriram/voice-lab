@@ -5,6 +5,10 @@ werkzeug>=3.0
 # The vendored acoustic pipeline
 numpy>=1.24
 scipy>=1.10
+# voice_stress_signal.py builds the snapshot table with DataFrames and
+# Timestamps. Missing from this file until a deploy caught it: everything
+# imports fine on a laptop that happens to have pandas already.
+pandas>=2.0
 
 # The production server. run.py's Flask dev server is fine on a laptop; this is
 # what deploy/voicelab.service actually starts.

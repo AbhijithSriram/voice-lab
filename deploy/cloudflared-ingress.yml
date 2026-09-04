@@ -1,0 +1,16 @@
+# Reference only. deploy/install.sh appends this block to the EXISTING tunnel
+# config at /etc/cloudflared/config.yml (tunnel 6d4003bd-...), immediately
+# before the `http_status:404` catch-all.
+#
+# There is one tunnel on this host serving several hostnames. Creating a second
+# tunnel for this app would work and would be wrong: two cloudflared daemons,
+# two credentials files, two things to remember on the next reboot.
+#
+# Ingress rules match top to bottom and the catch-all matches everything, so
+# position is not cosmetic -- a rule after it never fires.
+
+  - hostname: voicelab.abhijith-sriram.in
+    service: http://localhost:5000
+    originRequest:
+      # 8 MB WAV uploads, with feature extraction inline.
+      connectTimeout: 30s

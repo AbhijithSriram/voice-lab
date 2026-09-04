@@ -1,28 +1,22 @@
-# systemd unit for the voice lab.
+# systemd unit for the voice lab. Installed by deploy/install.sh.
 #
-#   sudo cp deploy/voicelab.service /etc/systemd/system/
-#   sudo systemctl daemon-reload
-#   sudo systemctl enable --now voicelab
-#
-# `enable` is what makes it come back after a reboot; `Restart=always` is what
-# makes it come back after a crash. Both are needed -- neither implies the other.
+# Logs:  journalctl -u voicelab -f
 
 [Unit]
-Description=voice lab - labelled voice sample collection for the pwiews pipeline
-Documentation=https://github.com/AbhijithSriram/voice-lab
+Description=Voice Lab (labelled voice samples for the pwiews acoustic pipeline)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=voicelab
-Group=voicelab
+User=abhijith
+Group=abhijith
 
-WorkingDirectory=/opt/voice-lab
+WorkingDirectory=/home/abhijith/voice-lab
 # run.py imports the top-level `config` module, so the project root has to be
 # importable. gunicorn adds WorkingDirectory to sys.path already; this is the
 # belt to that pair of braces.
-Environment=PYTHONPATH=/opt/voice-lab
+Environment=PYTHONPATH=/home/abhijith/voice-lab
 Environment=PYTHONUNBUFFERED=1
 
 # Secrets live here, not in the unit file and not in the repository.
@@ -33,7 +27,7 @@ EnvironmentFile=/etc/voice-lab.env
 # journal and a 5 s busy timeout. Several *processes* writing that database is
 # how you get "database is locked" in the middle of a demo; several threads in
 # one process is not.
-ExecStart=/opt/voice-lab/.venv/bin/gunicorn \
+ExecStart=/home/abhijith/voice-lab/.venv/bin/gunicorn \
     --workers 1 \
     --threads 8 \
     --timeout 120 \
@@ -42,19 +36,20 @@ ExecStart=/opt/voice-lab/.venv/bin/gunicorn \
     --error-logfile - \
     "voicelab.app:create_app()"
 
+# `always`, not `on-failure` as the other units here use: gunicorn exiting 0
+# because its last worker died is still an outage, and this should come back
+# from that too.
 Restart=always
 RestartSec=3
 
-# Sandboxing. The code directory is read-only to the service; the only path it
-# may write is its data directory, which is where VOICELAB_DATA_DIR points.
 NoNewPrivileges=true
 PrivateTmp=true
+# /usr and /etc read-only. /home is governed by ProtectHome, which stays off:
+# the code, the venv and the data directory all live under /home/abhijith.
 ProtectSystem=strict
-ProtectHome=true
+ProtectHome=false
 ProtectKernelTunables=true
-ProtectControlGroups=true
 RestrictSUIDSGID=true
-ReadWritePaths=/var/lib/voicelab
 
 [Install]
 WantedBy=multi-user.target

@@ -7,5 +7,6 @@
 # build http:// URLs, and the microphone would stop working for reasons that
 # look nothing like the cause.
 deploy/*        text eol=lf
+*.service       text eol=lf
 *.py            text eol=lf
 *.sh            text eol=lf

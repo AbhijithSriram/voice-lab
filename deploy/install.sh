@@ -127,7 +127,10 @@ else
         END { if (!done) exit 3 }
     ' "$BACKUP" > "$CF_CONFIG" || die "no catch-all rule found -- $CF_CONFIG restored from $BACKUP"
 
-    if ! cloudflared tunnel ingress validate --config "$CF_CONFIG"; then
+    # `--config` is a flag on `tunnel`, not on `ingress validate`. Put it in
+    # the wrong place and cloudflared prints "Incorrect Usage" and still exits
+    # 0, so the check passes without having validated anything.
+    if ! cloudflared tunnel --config "$CF_CONFIG" ingress validate; then
         cp -a "$BACKUP" "$CF_CONFIG"
         die "ingress validation failed -- $CF_CONFIG rolled back, tunnel untouched"
     fi

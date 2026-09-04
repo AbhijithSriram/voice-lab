@@ -44,10 +44,14 @@ RestartSec=3
 
 NoNewPrivileges=true
 PrivateTmp=true
-# /usr and /etc read-only. /home is governed by ProtectHome, which stays off:
-# the code, the venv and the data directory all live under /home/abhijith.
+# ProtectSystem=strict mounts the WHOLE hierarchy read-only, not just /usr and
+# /etc -- everything outside /dev, /proc and /sys. ProtectHome=false hands back
+# /home (the code, the venv, gunicorn's control socket in ~/.gunicorn), but
+# /srv stays read-only unless it is named here, and sqlite answers a read-only
+# directory with "attempt to write a readonly database" on the first INSERT.
 ProtectSystem=strict
 ProtectHome=false
+ReadWritePaths=/srv/nas/voice-lab
 ProtectKernelTunables=true
 RestrictSUIDSGID=true
 

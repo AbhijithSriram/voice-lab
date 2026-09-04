@@ -148,7 +148,10 @@ def create_app() -> Flask:
     @app.route("/signup", methods=["GET", "POST"])
     def signup() -> Any:
         """Create a subject (or admin) account."""
-        if request.method == "GET":
+        # Not `== "GET"`: werkzeug routes HEAD to this view too, and a HEAD
+        # falling through to the POST branch is handled as an empty form --
+        # answering an uptime check with 400 on a form it never submitted.
+        if request.method != "POST":
             return render_template("signup.html")
 
         username = (request.form.get("username") or "").strip().lower()
@@ -190,7 +193,8 @@ def create_app() -> Flask:
     @app.route("/login", methods=["GET", "POST"])
     def login() -> Any:
         """Sign in."""
-        if request.method == "GET":
+        # See signup(): HEAD must render the form, not fail an empty login.
+        if request.method != "POST":
             return render_template("login.html")
 
         username = (request.form.get("username") or "").strip().lower()

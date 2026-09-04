@@ -81,10 +81,22 @@
     animals: how much further apart they sit is the measurement.
   </p>
   <ul class="session-check" id="session-check">
-    <li data-load="phonation"><span class="tick">○</span> Sustained “aaah”</li>
-    <li data-load="automatic"><span class="tick">○</span> Counting or weekdays</li>
-    <li data-load="effortful"><span class="tick">○</span> Naming animals</li>
+    {% for load, name in [('phonation', 'Sustained “aaah”'),
+                          ('automatic', 'Counting to twenty'),
+                          ('effortful', 'Naming animals')] %}
+    <li data-load="{{ load }}">
+      <span class="tick">○</span> {{ name }}
+      <span class="progress {% if per_load.get(load, 0) >= neutral_target %}met{% endif %}">
+        {{ per_load.get(load, 0) }}/{{ neutral_target }} neutral
+      </span>
+    </li>
+    {% endfor %}
   </ul>
+  <p class="small faint">
+    Each load keeps its own baseline, so the counts above have to be filled
+    <em>separately</em> — {{ neutral_target }} neutral sittings before any sad
+    recording can be scored. A total across the three does not substitute.
+  </p>
   <p class="small faint" id="session-note"></p>
 </div>
 

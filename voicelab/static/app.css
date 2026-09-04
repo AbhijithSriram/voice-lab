@@ -144,6 +144,12 @@ tr:last-child td { border-bottom: none; }
 .session-check li .tick { color: var(--faint); font-size: 15px; width: 16px; }
 .session-check li.got { color: var(--text); }
 .session-check li.got .tick { color: var(--ok); }
+.session-check .progress {
+  margin-left: auto; font: 500 12px/1 var(--mono);
+  color: var(--warn); border: 1px solid var(--line);
+  border-radius: 20px; padding: 4px 9px;
+}
+.session-check .progress.met { color: var(--ok); border-color: var(--ok); }
 
 @media (max-width: 620px) {
   main { padding: 18px 14px 60px; }

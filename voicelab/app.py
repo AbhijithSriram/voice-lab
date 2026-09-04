@@ -50,6 +50,9 @@ LABELS = [
 
 LABEL_VALUES = {value for value, _ in LABELS}
 
+# The label that builds each per-load baseline.
+BASELINE_LABEL = "neutral"
+
 
 def _now() -> str:
     """Current UTC timestamp, ISO 8601."""
@@ -242,6 +245,25 @@ def create_app() -> Flask:
             (g.user["id"],),
         )
         pinned_automatic = anchor["prompt_id"] if anchor else None
+
+        # Per-load neutral counts. Each load carries its own baseline, so
+        # "six neutral recordings" means nothing on its own -- six spread over
+        # three loads leaves every one of them short. A subject cannot see that
+        # from a total, and the first person through this app recorded three
+        # sittings of which two counted for nothing.
+        per_load = {
+            row["load"]: row["n"]
+            for row in db.query(
+                "SELECT p.load, COUNT(*) AS n FROM recordings r"
+                " JOIN prompts p ON p.id = r.prompt_id"
+                " WHERE r.user_id = ? AND r.label = ? AND p.load IS NOT NULL"
+                " GROUP BY p.load",
+                (g.user["id"], BASELINE_LABEL),
+            )
+        }
+        # One to spare beyond the baseline minimum: the extras become controls,
+        # and without controls a separation cannot be computed at all.
+        neutral_target = dsp_settings.VOICE_BASELINE_MIN_SAMPLES + 1
         recent = db.query(
             "SELECT * FROM recordings WHERE user_id = ? ORDER BY created_at DESC LIMIT 10",
             (g.user["id"],),
@@ -253,6 +275,8 @@ def create_app() -> Flask:
             counts=counts,
             recent=recent,
             pinned_automatic=pinned_automatic,
+            per_load=per_load,
+            neutral_target=neutral_target,
             baseline_needed=dsp_settings.VOICE_BASELINE_MIN_SAMPLES,
         )
 

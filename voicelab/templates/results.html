@@ -11,9 +11,18 @@
   <h2>Headline</h2>
   {% if s.separation is none %}
     <p class="dim">
-      Nothing scorable yet. A subject needs more than
-      {{ report.settings.VOICE_BASELINE_MIN_SAMPLES }} neutral recordings and at
-      least one labelled one.
+      Nothing scorable yet. Each prompt load carries its own baseline, so a
+      subject needs more than
+      <strong>{{ report.settings.VOICE_BASELINE_MIN_SAMPLES }} neutral
+      recordings <em>of each load</em></strong> — not
+      {{ report.settings.VOICE_BASELINE_MIN_SAMPLES }} in total — plus at least
+      one labelled one at that same load.
+    </p>
+    <p class="small faint">
+      In practice: {{ report.settings.VOICE_BASELINE_MIN_SAMPLES + 1 }} complete
+      neutral sittings before any sad recording will score. Read the per-subject
+      <code>skipped</code> notes below — they name the load that fell short and
+      how many it had.
     </p>
   {% else %}
   <div class="stats">

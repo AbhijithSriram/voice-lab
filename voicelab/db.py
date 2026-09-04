@@ -146,26 +146,30 @@ DEFAULT_PROMPTS = [
     ),
     (
         "fixed",
-        "Say the days of the week, twice, at whatever pace feels natural.",
-        "automatic",
-    ),
-    (
-        "fixed",
-        "Read this aloud, twice: ‘The train leaves at seven in the morning and "
-        "arrives late in the evening. It is a long journey, but the seats are "
-        "comfortable enough to sleep.’",
-        "automatic",
-    ),
-    (
-        "fixed",
         "Name as many animals as you can, out loud, until you are asked to stop. "
         "Any language. If you run out, keep trying — the pauses are the point.",
         "effortful",
     ),
-    ("free", "Describe what you did yesterday, in as much detail as you like.", None),
-    ("free", "Describe the room you are sitting in right now.", None),
-    ("free", "Talk about a place you would like to travel to, and why.", None),
 ]
+
+# Deliberately gone, and deactivated rather than deleted because recordings
+# point at them:
+#
+#   "Say the days of the week"      a second automatic prompt, and a subject
+#   "Read this aloud: 'The train'"  can only ever use one -- their anchor has
+#                                   to stay fixed across sittings or the gaps
+#                                   are not comparable. The reading prompt also
+#                                   required English text, which quietly
+#                                   contradicts "any language you like".
+#
+#   the three free prompts          they carry no load, so they cannot pair and
+#                                   cannot contribute to the contrast. Worse,
+#                                   they pooled into one 'untagged' baseline
+#                                   spanning three unrelated tasks -- the exact
+#                                   mixing that per-load baselines exist to
+#                                   prevent. Offering them meant a subject
+#                                   could record a full sitting that counted
+#                                   for nothing, and one did.
 
 
 def connect(path: Optional[Path] = None) -> sqlite3.Connection:

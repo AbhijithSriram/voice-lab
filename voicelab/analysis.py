@@ -108,11 +108,30 @@ BASELINE_LABEL = "neutral"
 LOAD_EASY = "automatic"
 LOAD_HARD = "effortful"
 
-# A session must supply at least this share of the weighted feature set on both
-# halves before its contrast is scored. Same reasoning as MIN_AVAILABLE_WEIGHT
-# in voice_stress_signal: below half the weight, the number is a different
-# measurement wearing the same name.
-MIN_CONTRAST_WEIGHT = 0.5
+# How each feature moves when a task gets cognitively harder.
+#
+# These are NOT ``VOICE_FEATURE_DIRECTIONS``, and reusing those would silently
+# invert the result. That table encodes *pressured* speech -- strain makes you
+# faster (speaking_rate +1) and makes you pause less (pause_ratio -1).
+# Cognitive load does the opposite: retrieval under load lengthens pauses and
+# slows delivery. A load contrast scored with the strain directions reports a
+# large negative number for a textbook positive result.
+#
+# Only the two features whose load direction is actually established are
+# scored. f0 and the intensity coefficient of variation move under load too,
+# but not with a sign that can be asserted up front, and jitter and shimmer are
+# laryngeal rather than cognitive -- the sustained vowel carries those. Every
+# feature's raw delta is still reported in the table; this map only decides
+# what the headline number is built from.
+LOAD_DIRECTIONS: Dict[str, int] = {
+    "pause_ratio": +1,                       # load lengthens pauses
+    "speaking_rate_syllables_per_sec": -1,   # load slows delivery
+}
+
+# Share of the *load-relevant* weight a sitting must supply before its contrast
+# is scored. Measured against the weight of LOAD_DIRECTIONS rather than the
+# whole feature set, which would be unreachable by construction.
+MIN_CONTRAST_WEIGHT_FRACTION = 0.5
 
 
 @dataclass
@@ -279,7 +298,7 @@ def _mean_z(
     """
     stacked: Dict[str, List[float]] = {}
     for rec in recordings:
-        for name, value in _directional_z(_comparison_vector(rec["features"]), baseline).items():
+        for name, value in _undirected_z(_comparison_vector(rec["features"]), baseline).items():
             stacked.setdefault(name, []).append(value)
     return {name: float(np.mean(vals)) for name, vals in stacked.items() if vals}
 
@@ -291,26 +310,27 @@ def _load_response(delta: Dict[str, float]) -> Optional[float]:
         delta: Feature name to (hard z - easy z).
 
     Returns:
-        The weighted mean delta, renormalised over whichever features were
-        available, or None when too little of the weighted set survived.
+        The weighted mean delta over :data:`LOAD_DIRECTIONS`, signed so that
+        positive means "the hard prompt moved this the way cognitive load
+        moves it", or None when too little of that weight was measurable.
 
     Note:
-        Reuses ``VOICE_FEATURE_WEIGHTS``, which were tuned for the strain
-        signal rather than for cognitive load. That is a deliberate default,
-        not a claim: it keeps this number on the same footing as every other
-        score in the pipeline, and the per-feature table underneath is where
-        you look to see whether the load actually landed on the features the
-        weights emphasise.
+        Weighted by ``VOICE_FEATURE_WEIGHTS`` so pause ratio and speaking rate
+        keep their relative standing from the rest of the pipeline, but signed
+        by :data:`LOAD_DIRECTIONS` rather than ``VOICE_FEATURE_DIRECTIONS``,
+        which describe a different phenomenon in the opposite direction.
     """
+    possible = sum(dsp_settings.VOICE_FEATURE_WEIGHTS.get(n, 0.0) for n in LOAD_DIRECTIONS)
     total = 0.0
     available = 0.0
-    for name, value in delta.items():
+    for name, direction in LOAD_DIRECTIONS.items():
+        value = delta.get(name)
         weight = dsp_settings.VOICE_FEATURE_WEIGHTS.get(name)
-        if weight is None or not math.isfinite(value):
+        if value is None or weight is None or not math.isfinite(value):
             continue
-        total += weight * value
+        total += weight * direction * value
         available += weight
-    if available < MIN_CONTRAST_WEIGHT:
+    if not possible or available < MIN_CONTRAST_WEIGHT_FRACTION * possible:
         return None
     return float(total / available)
 
@@ -330,8 +350,8 @@ def _contrast_sessions(
         z-scores are taken against the same baseline. Written out, the centre
         cancels::
 
-            d * (hard - centre) / scale  -  d * (easy - centre) / scale
-              =  d * (hard - easy) / scale
+            (hard - centre) / scale  -  (easy - centre) / scale
+              =  (hard - easy) / scale
 
         so the contrast depends on the baseline's *scale* but not its *centre*.
         That is the property worth having: baseline drift, a different phone, a
@@ -371,6 +391,37 @@ def _contrast_sessions(
         result.load_response.setdefault(label, []).append(round(response, 3))
         for name, value in delta.items():
             result.load_feature_delta.setdefault(name, {}).setdefault(label, []).append(value)
+
+
+def _undirected_z(
+    features: Dict[str, float], baseline: VoiceBaseline
+) -> Dict[str, float]:
+    """Per-feature z against a baseline, with no direction applied.
+
+    Args:
+        features: The comparison feature vector for one recording.
+        baseline: The subject's baseline.
+
+    Returns:
+        Mapping of feature name to ``(value - centre) / scale``.
+
+    Note:
+        The contrast needs raw signs. Applying a direction here would bake the
+        strain convention into a difference that is about cognitive load, and
+        the per-feature table would then report a feature moving "the wrong
+        way" when it had done exactly what load predicts.
+    """
+    out: Dict[str, float] = {}
+    for name in dsp_settings.VOICE_COMPARISON_FEATURE_NAMES:
+        value = features.get(name)
+        centre = baseline.centre.get(name)
+        scale = baseline.scale.get(name)
+        if value is None or centre is None or scale is None:
+            continue
+        if not math.isfinite(value) or not math.isfinite(centre) or not scale:
+            continue
+        out[name] = float((value - centre) / scale)
+    return out
 
 
 def _comparison_vector(features: Dict[str, float]) -> Dict[str, float]:

@@ -296,6 +296,21 @@ class TestLoadContrast(unittest.TestCase):
         ).load_response["sad"]
         self.assertGreater(wide[0], narrow[0])
 
+    def test_load_directions_are_not_the_strain_directions(self) -> None:
+        """The bug this test exists to prevent, stated as a contract.
+
+        VOICE_FEATURE_DIRECTIONS describes pressured speech: faster, less
+        pausing. Cognitive load does the opposite. Scoring the contrast with
+        the strain table inverts the sign, so a textbook positive result
+        reports as a large negative one.
+        """
+        for name, load_dir in analysis.LOAD_DIRECTIONS.items():
+            strain_dir = dsp_settings.VOICE_FEATURE_DIRECTIONS[name]
+            self.assertEqual(
+                load_dir, -strain_dir,
+                f"{name}: load and strain directions must stay opposed",
+            )
+
     def test_the_positive_control_warns_when_neutrals_show_no_gap(self) -> None:
         """A neutral sitting with no easy/hard gap means the chain is deaf."""
         recs = self._baseline_neutrals()

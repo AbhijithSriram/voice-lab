@@ -250,9 +250,18 @@ class TestPerLoadBaselines(unittest.TestCase):
         result = analysis.analyse_subject("p", recs + [case])
         scores = result.case_scores.get("sad", [])
         self.assertEqual(len(scores), 1)
-        # 0.15 against a baseline centred near 0.306 with a spread of
-        # thousandths is a large departure, and must be reported as one.
-        self.assertGreater(scores[0], 20.0)
+
+        # 0.15 against a baseline centred near 0.306 whose spread is
+        # thousandths saturates this feature, so it contributes its entire
+        # weight and nothing else moved: 100 * 0.12.
+        #
+        # Pooled with the phonation neutrals the scale would have been the IQR
+        # across 0.004 and 0.30 -- roughly fifty times larger -- the z would
+        # have landed well under saturation, and the same recording would have
+        # scored around a third of this. That difference is the whole reason
+        # loads are kept apart.
+        saturated = dsp_settings.VOICE_FEATURE_WEIGHTS["pause_ratio"] * 100.0
+        self.assertAlmostEqual(scores[0], saturated, places=1)
 
     def test_each_load_builds_its_own_baseline(self) -> None:
         """Three neutrals of one load is a baseline; one each of three is not."""

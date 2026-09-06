@@ -149,6 +149,19 @@ LOAD_DIRECTIONS: Dict[str, int] = {
 # whole feature set, which would be unreachable by construction.
 MIN_CONTRAST_WEIGHT_FRACTION = 0.5
 
+# Dropped in the sensitivity run. Not a claim that these features are useless --
+# a claim that on THIS corpus they are not measuring what they name. Across 41
+# sustained-vowel recordings the median jitter was 8.03% with a maximum of
+# 25.99%, against a clinical norm under about 1%; 76% sat above 3%. Values that
+# high are not eleven damaged larynxes, they are a period detector failing. At
+# 16 kHz one sample is 62.5 us, so for a 200 Hz voice 1% jitter is a period
+# difference smaller than a single sample -- the quantisation floor alone lands
+# above the clinical threshold before any noise is added.
+#
+# Together these carry 0.38 of the feature weight, so "what are they worth here"
+# is worth answering before anyone re-records a corpus at 44.1 kHz.
+SENSITIVITY_DROP: Tuple[str, ...] = ("jitter_local_pct", "shimmer_local_pct")
+
 
 @dataclass
 class SubjectResult:
@@ -621,16 +634,130 @@ def analyse_subject(username: str, recordings: Sequence[Dict[str, Any]]) -> Subj
     return result
 
 
-def run_analysis(by_subject: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
+def _drop_features(
+    by_subject: Dict[str, List[Dict[str, Any]]], drop: Sequence[str]
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Copy the corpus with some features removed from every recording.
+
+    Args:
+        by_subject: Recordings grouped by username.
+        drop: Feature names to remove.
+
+    Returns:
+        A new mapping; the input is not modified.
+
+    Note:
+        Removing a feature from the vector is the whole mechanism, and it is why
+        this costs no change to the vendored DSP.
+        ``compute_voice_stress_signal`` skips any feature it cannot read and
+        divides by ``available_weight`` at the end, so whatever remains is
+        renormalised over its own weight automatically. Dropping jitter and
+        shimmer leaves 0.62, comfortably above the 0.5 floor below which the
+        signal refuses to emit a number at all.
+    """
+    dropped = set(drop)
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    for name, recordings in by_subject.items():
+        rows = []
+        for rec in recordings:
+            features = rec.get("features")
+            rows.append({
+                **rec,
+                "features": (
+                    {k: v for k, v in features.items() if k not in dropped}
+                    if features else features
+                ),
+            })
+        out[name] = rows
+    return out
+
+
+def _sensitivity(
+    by_subject: Dict[str, List[Dict[str, Any]]], full: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Score the corpus again without :data:`SENSITIVITY_DROP` and compare.
+
+    Args:
+        by_subject: Recordings grouped by username.
+        full: The report produced from the complete feature set.
+
+    Returns:
+        Both sets of headline figures, per-subject AUCs, and a plain verdict.
+
+    Note:
+        The load contrast is unaffected and deliberately not reported here:
+        :data:`LOAD_DIRECTIONS` covers only ``pause_ratio`` and
+        ``speaking_rate``, so removing jitter and shimmer cannot move it. This
+        compares the absolute score, which is where their 0.38 of the weight
+        lands.
+    """
+    reduced = run_analysis(by_subject, drop_features=SENSITIVITY_DROP)
+
+    def headline(report: Dict[str, Any]) -> Dict[str, Any]:
+        summary = report["summary"]
+        return {
+            key: summary[key] for key in
+            ("subjects_scored", "control_n", "case_n", "control_mean",
+             "case_mean", "separation", "pooled_auc", "mean_within_subject_auc")
+        }
+
+    with_all, without = headline(full), headline(reduced)
+    a, b = with_all["mean_within_subject_auc"], without["mean_within_subject_auc"]
+    if a is None or b is None:
+        verdict = "not enough scored subjects to compare"
+    elif b > a + 0.05:
+        verdict = (
+            f"dropping them separates BETTER ({a} -> {b}). On this corpus they "
+            f"are costing the score, which is what their measured values predict."
+        )
+    elif a > b + 0.05:
+        verdict = (
+            f"they are contributing ({a} with, {b} without) despite the "
+            f"implausible values. Understand why before removing them."
+        )
+    else:
+        verdict = (
+            f"no material difference ({a} with, {b} without). They carry 0.38 of "
+            f"the weight and change nothing."
+        )
+
+    return {
+        "dropped": list(SENSITIVITY_DROP),
+        "reason": (
+            "Median sustained-vowel jitter on this corpus sits far above the "
+            "clinical norm, and 16 kHz cannot resolve jitter to that precision "
+            "in any case. This asks what the two features are worth here."
+        ),
+        "with_all_features": with_all,
+        "without_dropped": without,
+        "per_subject": [
+            {"username": x["username"], "auc_with": x["auc"], "auc_without": y["auc"]}
+            for x, y in zip(full["subjects"], reduced["subjects"])
+            if x["auc"] is not None or y["auc"] is not None
+        ],
+        "verdict": verdict,
+    }
+
+
+def run_analysis(
+    by_subject: Dict[str, List[Dict[str, Any]]],
+    drop_features: Sequence[str] = (),
+) -> Dict[str, Any]:
     """Analyse every subject and pool the result.
 
     Args:
         by_subject: Recordings grouped by username.
+        drop_features: Features to exclude from scoring entirely. Used by the
+            sensitivity run; empty for the headline analysis.
 
     Returns:
         A JSON-serialisable report: per-subject rows, a pooled summary, the
-        per-feature table, and a copy of the settings used.
+        per-feature table, a copy of the settings used, and -- on the headline
+        run only -- a ``sensitivity`` section scoring the corpus a second time
+        without :data:`SENSITIVITY_DROP`.
     """
+    if drop_features:
+        by_subject = _drop_features(by_subject, drop_features)
     subjects = [analyse_subject(name, recs) for name, recs in sorted(by_subject.items())]
     scored = [s for s in subjects if s.control_scores and s.all_case_scores]
 
@@ -698,7 +825,7 @@ def run_analysis(by_subject: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
         })
     contrast_rows.sort(key=lambda r: (r["shift"] is None, -(r["shift"] or 0)))
 
-    return {
+    report = {
         "subjects": [s.to_dict() for s in subjects],
         "load_contrast": {
             "sessions_paired": sum(s.sessions_paired for s in subjects),
@@ -731,6 +858,11 @@ def run_analysis(by_subject: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
         "features": feature_rows,
         "settings": settings_snapshot(),
     }
+    # Only the headline run spawns the comparison; the reduced run must not
+    # recurse into another one.
+    if not drop_features:
+        report["sensitivity"] = _sensitivity(by_subject, report)
+    return report
 
 
 def _positive_control(subjects: Sequence[SubjectResult]) -> Dict[str, Any]:

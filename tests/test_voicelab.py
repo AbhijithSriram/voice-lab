@@ -284,6 +284,65 @@ class TestPerLoadBaselines(unittest.TestCase):
         self.assertEqual(result.sessions_paired, 0)
 
 
+class TestSensitivity(unittest.TestCase):
+    """Scoring the corpus a second time without jitter and shimmer."""
+
+    def _corpus(self) -> dict:
+        recs = []
+        for i in range(5):
+            recs.append(recording("neutral", f"2026-01-0{i + 1}",
+                                  pause_ratio=0.30 + 0.004 * i))
+        # Departs in pause_ratio ONLY. Give the case an inflated jitter and the
+        # dropped pair becomes a large contributor, so removing it lowers the
+        # score for a reason that has nothing to do with renormalisation.
+        recs.append(recording("sad", "2026-02-01", pause_ratio=0.15))
+        return {"p": recs}
+
+    def test_the_headline_run_carries_a_sensitivity_section(self) -> None:
+        report = analysis.run_analysis(self._corpus())
+        self.assertIn("sensitivity", report)
+        self.assertEqual(report["sensitivity"]["dropped"],
+                         list(analysis.SENSITIVITY_DROP))
+
+    def test_the_reduced_run_does_not_recurse(self) -> None:
+        """Without this guard the second run spawns a third, and so on."""
+        report = analysis.run_analysis(self._corpus(),
+                                       drop_features=analysis.SENSITIVITY_DROP)
+        self.assertNotIn("sensitivity", report)
+
+    def test_dropping_features_does_not_mutate_the_input(self) -> None:
+        corpus = self._corpus()
+        before = len(corpus["p"][0]["features"])
+        analysis.run_analysis(corpus)
+        self.assertEqual(len(corpus["p"][0]["features"]), before)
+
+    def test_the_remaining_weight_is_renormalised_not_lost(self) -> None:
+        """The mechanism the whole approach rests on.
+
+        Nothing re-weights anything by hand. compute_voice_stress_signal skips
+        features it cannot read and divides by the weight it actually used, so
+        removing jitter and shimmer leaves 0.62 and the survivors scale up to
+        fill it. If that stopped being true, every sensitivity number would be
+        silently deflated by 38%.
+        """
+        kept = [n for n in dsp_settings.VOICE_COMPARISON_FEATURE_NAMES
+                if n not in analysis.SENSITIVITY_DROP]
+        remaining = sum(dsp_settings.VOICE_FEATURE_WEIGHTS[n] for n in kept)
+        self.assertAlmostEqual(remaining, 0.62, places=6)
+        # Must clear the floor below which the signal refuses to emit at all.
+        self.assertGreater(remaining, 0.5)
+
+    def test_a_pause_only_departure_scores_higher_without_the_dropped_pair(self) -> None:
+        """Same departure, larger share of a smaller weighted set."""
+        report = analysis.run_analysis(self._corpus())
+        full = report["summary"]["case_mean"]
+        reduced = report["sensitivity"]["without_dropped"]["case_mean"]
+        # pause_ratio alone saturates: 100 * 0.12 / 1.00 with everything,
+        # 100 * 0.12 / 0.62 once the pair is gone.
+        self.assertAlmostEqual(full, 12.0, places=1)
+        self.assertAlmostEqual(reduced, 19.35, places=1)
+
+
 class TestArousalClamp(unittest.TestCase):
     """What the absolute signal can and cannot see, stated as tests.
 

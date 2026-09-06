@@ -163,6 +163,53 @@
 </div>
 {% endif %}
 
+{% set sn = report.sensitivity %}
+{% if sn %}
+<div class="card">
+  <h2>Sensitivity: without jitter and shimmer</h2>
+  <p class="small dim" style="margin-top:-6px">
+    {{ sn.reason }} The corpus is scored a second time with
+    {% for f in sn.dropped %}<code>{{ f }}</code>{% if not loop.last %} and {% endif %}{% endfor %}
+    removed — together 0.38 of the weight — and the remaining five renormalised.
+    Nothing in the vendored pipeline changes; the features are simply not there
+    to read. The load contrast is unaffected and not shown, since it never used
+    these two.
+  </p>
+  <table>
+    <tr>
+      <th></th><th class="num">Controls</th><th class="num">Cases</th>
+      <th class="num">Control μ</th><th class="num">Case μ</th>
+      <th class="num">Separation</th><th class="num">Within-subject AUC</th>
+    </tr>
+    {% for name, row in [('All seven features', sn.with_all_features),
+                         ('Without the pair', sn.without_dropped)] %}
+    <tr>
+      <td>{{ name }}</td>
+      <td class="num">{{ row.control_n }}</td>
+      <td class="num">{{ row.case_n }}</td>
+      <td class="num">{{ row.control_mean if row.control_mean is not none else '—' }}</td>
+      <td class="num">{{ row.case_mean if row.case_mean is not none else '—' }}</td>
+      <td class="num">{{ row.separation if row.separation is not none else '—' }}</td>
+      <td class="num">{{ row.mean_within_subject_auc if row.mean_within_subject_auc is not none else '—' }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  <p class="small" style="margin-top:14px"><strong>{{ sn.verdict }}</strong></p>
+  {% if sn.per_subject %}
+  <table style="margin-top:14px">
+    <tr><th>Subject</th><th class="num">AUC with</th><th class="num">AUC without</th></tr>
+    {% for r in sn.per_subject %}
+    <tr>
+      <td class="mono small">{{ r.username }}</td>
+      <td class="num">{{ r.auc_with if r.auc_with is not none else '—' }}</td>
+      <td class="num">{{ r.auc_without if r.auc_without is not none else '—' }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+</div>
+{% endif %}
+
 <div class="card">
   <h2>Per feature</h2>
   <p class="small dim" style="margin-top:-6px">

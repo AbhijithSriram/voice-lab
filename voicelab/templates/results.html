@@ -89,7 +89,7 @@
     the subject was sad.
   </p>
 
-  {% if lc.control_check.startswith('WARNING') %}
+  {% if lc.control_check and lc.control_check.startswith('WARNING') %}
     <p class="pill bad" style="display:inline-block">{{ lc.control_check }}</p>
     <p class="small dim">
       This is the positive control failing. The easy/hard gap is a large effect

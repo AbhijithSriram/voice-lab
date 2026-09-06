@@ -72,11 +72,14 @@ habitual speaking rate, their language -- cancels with it. A difference is a
 far more robust thing to measure than a level when conditions cannot be
 controlled, and here they cannot.
 
-It doubles as a **positive control**. The easy/hard gap is a large effect whose
-existence is not in question, so it can be checked independently: if neutral
-sittings show no gap, the chain is not resolving cognitive load, and nothing
-subtler it reports about sadness can be believed. ``control_check`` in the
-report says so in as many words.
+It doubles as a **positive control**, but the control must be read off **raw**
+feature values, not off this contrast. Neutral recordings are what the per-load
+baselines are built from, so their z-scores centre on zero however the prompts
+behave -- a control computed from them can only ever fail. ``_positive_control``
+therefore compares each subject's median raw ``pause_ratio`` on the hard prompt
+against the easy one, and asks whether the larger effect, whose existence is not
+in question, is visible at all. If it is not, nothing subtler the pipeline
+reports about mood can be believed.
 
 The contrast covers rate and pause structure (0.30 of the feature weight). It
 says nothing about jitter and shimmer (0.38), which are laryngeal rather than
@@ -170,6 +173,9 @@ class SubjectResult:
     # sitting, and the per-feature deltas behind them.
     load_response: Dict[str, List[float]] = field(default_factory=dict)
     load_feature_delta: Dict[str, Dict[str, List[float]]] = field(default_factory=dict)
+    # Median RAW pause_ratio per load over this subject's neutral recordings.
+    # The positive control reads this, not the z-scores: see run_analysis.
+    load_raw_pause: Dict[str, float] = field(default_factory=dict)
     sessions_paired: int = 0
     sessions_unpaired: int = 0
 
@@ -584,6 +590,15 @@ def analyse_subject(username: str, recordings: Sequence[Dict[str, Any]]) -> Subj
     for rec in usable:
         by_load.setdefault(str(rec.get("load") or UNTAGGED_LOAD), []).append(rec)
 
+    # Raw medians for the positive control, before any baseline touches them.
+    for load, recs in by_load.items():
+        pauses = [
+            r["features"]["pause_ratio"] for r in recs
+            if r["label"] == BASELINE_LABEL and r["features"].get("pause_ratio") is not None
+        ]
+        if pauses:
+            result.load_raw_pause[load] = float(np.median(pauses))
+
     control_z: List[Dict[str, float]] = []
     case_z: List[Dict[str, float]] = []
     baselines: Dict[str, VoiceBaseline] = {}
@@ -698,17 +713,7 @@ def run_analysis(by_subject: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
             "mean_within_subject_auc": round(float(np.mean(contrast_subject_aucs)), 3)
             if contrast_subject_aucs else None,
             "features": contrast_rows,
-            # The positive control. The easy/hard gap is a large effect that is
-            # not in doubt, so a neutral_mean indistinguishable from zero means
-            # the measurement chain is not resolving cognitive load at all --
-            # and nothing subtler it reports can be believed.
-            "control_check": (
-                "no paired sittings yet" if not contrast_neutral
-                else "load detected in neutral sittings"
-                if abs(float(np.mean(contrast_neutral))) >= 0.25
-                else "WARNING: neutral sittings show almost no easy/hard gap; "
-                     "the pipeline is not resolving a large known effect"
-            ),
+            **_positive_control(subjects),
         },
         "summary": {
             "subjects_total": len(subjects),
@@ -725,6 +730,67 @@ def run_analysis(by_subject: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
         },
         "features": feature_rows,
         "settings": settings_snapshot(),
+    }
+
+
+def _positive_control(subjects: Sequence[SubjectResult]) -> Dict[str, Any]:
+    """Check the chain resolves cognitive load at all, on raw values.
+
+    Args:
+        subjects: Every analysed subject.
+
+    Returns:
+        ``control_check`` and ``control_detail`` for the report.
+
+    Note:
+        This reads **raw** median ``pause_ratio`` per load, not the contrast's
+        z-scores. An earlier version checked that the mean neutral contrast was
+        far from zero, which was wrong by construction: neutral recordings are
+        what the per-load baselines are built from, so their z-scores centre on
+        zero whatever the prompts do, and the check could only ever fail. It
+        reported a false alarm against data whose raw separation was in fact
+        large and clean.
+
+        The real question is whether naming animals produces more pausing than
+        counting, per subject, before any normalisation touches it.
+    """
+    agree = 0
+    total = 0
+    gaps: List[float] = []
+    for subject in subjects:
+        easy = subject.load_raw_pause.get(LOAD_EASY)
+        hard = subject.load_raw_pause.get(LOAD_HARD)
+        if easy is None or hard is None:
+            continue
+        total += 1
+        gaps.append(hard - easy)
+        if hard > easy:
+            agree += 1
+
+    if not total:
+        return {"control_check": "no subject has both prompts yet", "control_detail": None}
+
+    detail = {
+        "subjects": total,
+        "subjects_pausing_more_on_the_hard_prompt": agree,
+        "median_raw_gap": round(float(np.median(gaps)), 3),
+    }
+    if agree * 2 >= total and float(np.median(gaps)) > 0.02:
+        return {
+            "control_check": (
+                f"passed - the hard prompt draws more pausing than the easy one in "
+                f"{agree}/{total} subjects (median gap {np.median(gaps):+.3f})"
+            ),
+            "control_detail": detail,
+        }
+    return {
+        "control_check": (
+            f"WARNING: the hard prompt does not reliably draw more pausing than the "
+            f"easy one ({agree}/{total} subjects, median gap {np.median(gaps):+.3f}). "
+            f"The chain is not resolving a large known effect, so nothing subtler "
+            f"it reports can be believed."
+        ),
+        "control_detail": detail,
     }
 
 

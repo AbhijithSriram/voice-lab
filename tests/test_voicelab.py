@@ -402,14 +402,31 @@ class TestLoadContrast(unittest.TestCase):
                 f"{name}: load and strain directions must stay opposed",
             )
 
-    def test_the_positive_control_warns_when_neutrals_show_no_gap(self) -> None:
-        """A neutral sitting with no easy/hard gap means the chain is deaf."""
+    def test_the_positive_control_warns_when_the_prompts_do_not_separate(self) -> None:
+        """A hard prompt that draws no more pausing means the chain is deaf."""
         recs = []
         for i in range(self.WARMUP):
             recs += paired("neutral", f"2026-01-{i + 1:02d}", f"w{i}", 0.30, 0.30)
-        recs += paired("sad", "2026-03-01", "d1", 0.30, 0.301)
         report = analysis.run_analysis({"p": recs})
         self.assertTrue(report["load_contrast"]["control_check"].startswith("WARNING"))
+
+    def test_the_positive_control_passes_on_a_real_prompt_gap(self) -> None:
+        """The regression this replaced.
+
+        The old control read the mean neutral *contrast*, which is zero by
+        construction -- neutral recordings are what the per-load baselines are
+        built from. It reported a false alarm against 122 real recordings whose
+        raw separation was large and clean (median pause_ratio 0.26 counting
+        against 0.49 naming animals). The control now reads raw values.
+        """
+        recs = []
+        for i in range(self.WARMUP):
+            recs += paired("neutral", f"2026-01-{i + 1:02d}", f"w{i}", 0.26, 0.49)
+        report = analysis.run_analysis({"p": recs})
+        check = report["load_contrast"]["control_check"]
+        self.assertTrue(check.startswith("passed"), check)
+        self.assertEqual(
+            report["load_contrast"]["control_detail"]["subjects_pausing_more_on_the_hard_prompt"], 1)
 
 
 class TestAuc(unittest.TestCase):

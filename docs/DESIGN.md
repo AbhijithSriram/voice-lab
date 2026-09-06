@@ -29,6 +29,12 @@ useful is a specific, named reason the pipeline fails.
 
 **Live at:** `https://voicelab.abhijith-sriram.in`
 
+> **Where we are (6 September 2026).** The first collection round is in: 122
+> recordings from 11 subjects, none of which the extractor failed on. The
+> collection works; the pipeline does not separate mood yet, and two specific
+> reasons are now measured rather than guessed. **Section 11 has the numbers** —
+> read it before quoting anything from this document as a result.
+
 ---
 
 ## 2. The question, stated precisely
@@ -117,6 +123,12 @@ transcoded anywhere, and the server needs no `ffmpeg`.
 
 Sample-rate mismatches are **refused, not resampled**. Resampling changes period
 lengths, and jitter *is* a period-length measurement.
+
+> **Read section 11.4 before relying on this.** The argument above is about
+> *lossy coding* and it holds. It does not establish that 16 kHz is enough
+> **resolution** for perturbation measures, and the first real corpus says it is
+> not: one sample at 16 kHz is 62.5 µs, which is larger than the period
+> difference 1% jitter represents in a 200 Hz voice.
 
 ### 3.5 Where it lives
 
@@ -442,3 +454,184 @@ microphone — the app looks broken in a way that has nothing to do with audio.
    access model on a public hostname.
 5. **Do we report the absolute score at all**, given §7.2, or lead with the
    contrast and present the absolute number only as a documented null?
+
+---
+
+## 11. First results — 6 September 2026
+
+First real corpus, collected over two days from volunteers recording on their
+own phones. Numbers below are from the analysis run of 6 September; regenerate
+with the **Analyse** button rather than trusting these once more data lands.
+
+### 11.1 What was collected
+
+```
+registered users        16
+users who recorded      11
+recordings             122
+extraction failures      0
+durations          7.2 - 45.1 s
+languages          86 unspecified, Tamil 18, Hindi 12, English 6
+```
+
+| subject | ordinary rounds | low rounds | status |
+|---|---|---|---|
+| `djk` | 4 | 6 | scorable |
+| `overthinker234` | 4 | 1 | scorable |
+| `sha` | 4 | 1 | scorable |
+| `circinus` | 4 | 0 | one low round from scorable |
+| `smp` | 4 | 0 | one low round from scorable |
+| `talkative` | 4 | 0 | one low round from scorable |
+| `hahaha` | 2 | 1 | low round unusable — baseline incomplete |
+| `jayesh`, `sabari` | 2 | 0 | needs 2 more ordinary rounds |
+| `abhijith_sriram`, `farzana006` | 1 | 0 | needs 3 more |
+
+**Only three subjects are scorable, and `djk` supplies 18 of the 24 cases.**
+Every result below is constrained by that before it is constrained by anything
+else.
+
+### 11.2 What works
+
+**Feature extraction succeeded on 122 of 122 recordings.** Eleven people, their
+own handsets, their own rooms, four languages, no `ffmpeg`, no failures. This
+was a genuine risk — the vendored DSP had only ever seen a synthetic corpus —
+and it is now answered.
+
+**The prompt design produces the cognitive-load effect it was built for.**
+Median raw values over ordinary recordings:
+
+| prompt | `pause_ratio` | rate (syll/s) |
+|---|---|---|
+| sustained vowel | 0.005 | 0.87 |
+| counting | 0.260 | 1.95 |
+| naming animals | 0.490 | 1.31 |
+
+Naming animals draws close to **double** the pausing of counting, and the
+direction holds in **10 of 11 subjects** (median gap +0.212). The positive
+control passes.
+
+### 11.3 The pipeline does not separate mood yet
+
+```
+subjects scored              3
+controls / cases          9 / 24
+control mean / case mean   29.36 / 31.46
+separation                 +2.09
+mean within-subject AUC    0.432
+  djk                      0.074
+  overthinker234           0.444
+  sha                      0.778
+```
+
+Below chance — but three values spanning 0.07 to 0.78 are not a measurement.
+**Do not report an AUC from this round.** The honest statement is that the study
+is not yet powered to answer its own question.
+
+### 11.4 Jitter and shimmer are not measuring voices
+
+Across 41 sustained-vowel recordings:
+
+```
+median jitter    8.03%
+range            0.51% - 25.99%
+above 3%         76% of recordings
+```
+
+Clinical norm on sustained phonation is **under about 1%**; above 3% indicates
+pathology. Values above 20% are not physiologically possible from someone
+holding a steady note — that is a period detector failing, not eleven damaged
+larynxes. `djk`, who has the most data and the most inverted AUC, sits at
+**22.24%**.
+
+Part of this is structural and was predictable. **At 16 kHz one sample is
+62.5 µs.** A 200 Hz voice has a 5000 µs period, so 1% jitter is a period
+difference of about 50 µs — *smaller than a single sample*. The quantisation
+floor alone lands near 1.25%, above the clinical threshold, and worsens with
+pitch. Clinical perturbation work uses 44.1 kHz for exactly this reason.
+
+§3.4 defends 16 kHz against *lossy coding*, which it does correctly. It does not
+establish that 16 kHz suffices for perturbation measures — and it does not.
+
+Quantisation alone does not explain a 0.51–25.99% spread, so period detection is
+failing outright on many recordings as well.
+
+**These two features carry 0.38 of the feature weight.**
+
+#### The sensitivity run
+
+Rather than edit the weights, `run_analysis` now scores the corpus a second time
+with the pair removed (`SENSITIVITY_DROP`). No vendored code changes — the
+features are simply absent from the vector, and `compute_voice_stress_signal`
+divides by the weight it actually used, so the surviving five renormalise over
+0.62 by themselves.
+
+| | with all 7 | without the pair |
+|---|---|---|
+| mean within-subject AUC | 0.432 | **0.506** |
+| separation | +2.09 | +0.94 |
+| `djk` | 0.074 | 0.130 |
+| `overthinker234` | 0.444 | 0.500 |
+| `sha` | 0.778 | 0.889 |
+
+**All three subjects improve.** With n=3 that consistency carries more weight
+than the size of the change.
+
+Two conclusions, and the second matters as much as the first:
+
+1. The two features are **actively costing accuracy** on this corpus.
+2. **0.506 is still a coin flip.** Removing them stops the harm; it does not
+   produce a working detector. They are *a* problem, not *the* problem.
+
+### 11.5 The one consistent mood finding
+
+Per subject, low-mood minus ordinary, raw medians over the two speech prompts:
+
+| subject | Δ `pause_ratio` | Δ rate | Δ f0 |
+|---|---|---|---|
+| `djk` | −0.036 | +0.258 | **−6.5 Hz** |
+| `hahaha` | +0.023 | +1.249 | **−16.7 Hz** |
+| `overthinker234` | +0.075 | −0.293 | **−1.3 Hz** |
+| `sha` | −0.179 | +0.163 | **−30.3 Hz** |
+
+**f0 falls when low in 4 of 4** — three clearly, one negligibly, none the other
+way. That is the only consistent signal in the corpus.
+
+**This contradicts what §2.1 led us to expect.** We predicted low-arousal
+sadness: slower, more pausing. `pause_ratio` splits 2 up / 2 down, and speaking
+rate goes *faster* in 3 of 4. Whatever subjects produce when they mark
+themselves "Low", it is not the psychomotor-retardation profile. Anyone
+presenting this must not assert the textbook pattern — our own data does not
+show it.
+
+f0 tracking itself looks sound: 107–252 Hz across subjects, male and female
+ranges where expected, no sign of octave doubling.
+
+### 11.6 A bug this round exposed
+
+The dashboard was printing `WARNING: the pipeline is not resolving a large known
+effect`. **That was a false alarm, and the fault was ours.** The control tested
+whether ordinary sittings showed an easy/hard gap *in z-scores* — but ordinary
+recordings are what the per-load baselines are built from, so their z-scores
+centre on zero however the prompts behave. It could only ever fail.
+
+Introducing per-load baselines (§6.1) and keeping that control (§6.2) were each
+defensible; together they were not. It now reads raw values and passes at 10/11
+subjects.
+
+The lesson generalises: **a control derived from the same normalisation it is
+meant to check is not a control.**
+
+### 11.7 What the next round needs
+
+1. **More low-mood rounds, before anything else.** `circinus`, `smp` and
+   `talkative` have complete baselines and no low round — three messages would
+   double the scorable n from 3 to 6. Nothing in the code moves the result as
+   much.
+2. **Chase the two-round subjects.** `hahaha` has already recorded a low round
+   sitting unusable because their baseline stops at 2.
+3. **Decide about 44.1 kHz for the sustained vowel only.** It would make jitter
+   measurable; it would also break the byte-identical property with `pwiews`
+   settings and require re-recording. Not worth doing until the n problem is
+   fixed.
+4. **Do not touch `VOICE_FEATURE_DIRECTIONS` yet.** Flipping signs to chase a
+   result across three subjects is how you fit noise. Revisit at n ≥ 10.
